@@ -12,49 +12,49 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** `.scratch/novel-miner/spec.md`
 
 ### Feature
 
-- [ ] Go module + Fiber app boots and binds for LAN (or documented localhost path for dev)
-- [ ] HTMX available to the UI (CDN or vendored asset); PIN form and shell are server-rendered HTML
-- [ ] Server is reachable from another device on the same LAN (or documented localhost path for dev)
-- [ ] Shared PIN configuration is supported (env or local config; not hard-coded in source)
-- [ ] Correct PIN unlocks access and sets a session cookie that lasts until server restart
-- [ ] Session cookie is `HttpOnly` and `SameSite=Lax` (`Secure` not required for v1 LAN HTTP)
-- [ ] Incorrect PIN is rejected with a clear error and does not expose mining features
-- [ ] Restarting the server invalidates sessions (re-PIN required)
-- [ ] MiningApp exposes an unlock/auth use-case; Fiber handlers are a thin adapter over it
+- [x] Go module + Fiber app boots and binds for LAN (or documented localhost path for dev)
+- [x] HTMX available to the UI (CDN or vendored asset); PIN form and shell are server-rendered HTML
+- [x] Server is reachable from another device on the same LAN (or documented localhost path for dev)
+- [x] Shared PIN configuration is supported (env or local config; not hard-coded in source)
+- [x] Correct PIN unlocks access and sets a session cookie that lasts until server restart
+- [x] Session cookie is `HttpOnly` and `SameSite=Lax` (`Secure` not required for v1 LAN HTTP)
+- [x] Incorrect PIN is rejected with a clear error and does not expose mining features
+- [x] Restarting the server invalidates sessions (re-PIN required)
+- [x] MiningApp exposes an unlock/auth use-case; Fiber handlers are a thin adapter over it
 
 ### Testing (required this ticket)
 
 **L1 unit / facade (`go test`, no Fiber)**
 
-- [ ] `Unlock` (or equivalent) accept with correct PIN via fake PinAuth
-- [ ] Reject wrong PIN; no authenticated capability granted
-- [ ] Tests do not hard-code production PIN secret
+- [x] `Unlock` (or equivalent) accept with correct PIN via fake PinAuth
+- [x] Reject wrong PIN; no authenticated capability granted
+- [x] Tests do not hard-code production PIN secret
 
 **L2 HTTP smoke (Fiber `app.Test` or equivalent)**
 
-- [ ] Wrong PIN on unlock route → not authenticated (status + body assert)
-- [ ] Correct PIN → session cookie set with HttpOnly + SameSite=Lax; gated route returns success
-- [ ] Gated route without session → rejected
+- [x] Wrong PIN on unlock route → not authenticated (status + body assert)
+- [x] Correct PIN → session cookie set with HttpOnly + SameSite=Lax; gated route returns success
+- [x] Gated route without session → rejected
 
 **L3 UI click smoke (headless browser → real HTMX UI)**
 
-- [ ] Open app → submit wrong PIN → error visible; mining shell not shown
-- [ ] Submit correct PIN → authenticated home shell visible
-- [ ] Stable selectors (`data-testid` or roles) on PIN form and shell
+- [x] Open app → submit wrong PIN → error visible; mining shell not shown
+- [x] Submit correct PIN → authenticated home shell visible
+- [x] Stable selectors (`data-testid` or roles) on PIN form and shell
 
 **Harness + gate**
 
-- [ ] Single documented command runs L1+L2+L3 (README or Makefile)
-- [ ] Full suite run green before ticket marked done
-- [ ] Manual note: LAN from phone (not automated)
+- [x] Single documented command runs L1+L2+L3 (README or Makefile)
+- [x] Full suite run green before ticket marked done
+- [x] Manual note: LAN from phone (not automated)
 
 ### Done only when
 
-- [ ] All feature + testing checkboxes above
-- [ ] Full automated suite executed and green
+- [x] All feature + testing checkboxes above
+- [x] Full automated suite executed and green

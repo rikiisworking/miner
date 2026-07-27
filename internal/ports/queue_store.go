@@ -23,10 +23,11 @@ type QueueStore interface {
 	Update(entry QueueEntry) error
 	// Get returns the entry for id, or false if missing.
 	Get(id string) (QueueEntry, bool, error)
-	// List returns all entries (order not required to be stable for product rules
-	// beyond first-unknown-at for export, which is ticket 04).
+	// List returns all entries (order not required). Export sorts by first-unknown-at.
 	List() ([]QueueEntry, error)
 	// AppendUnknown atomically appends surface if absent (single locked RMW).
 	// found is false when id is missing. added is false when surface already present.
 	AppendUnknown(id, surface string) (entry QueueEntry, added, found bool, err error)
+	// ClearAll deletes every entry. No-op when already empty.
+	ClearAll() error
 }

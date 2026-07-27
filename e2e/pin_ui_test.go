@@ -410,4 +410,130 @@ func TestUI_MarkUnknown_DuplicateFeedback_CountUnchanged(t *testing.T) {
 	}
 }
 
+func TestUI_ExportAndClearAll_FullTextPath(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	setSentence(t, page, "病院に行った。")
+	submitAnalyze(t, page)
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		t.Fatal(err)
+	}
+	clickMarkUnknown(t, page, "病院")
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="saved"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("save feedback: %v\nhtml=%s", err, html)
+	}
+
+	// Queue page
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-page"]`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="queue-entry"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue entry missing: %v\nhtml=%s", err, html)
+	}
+
+	// Export control present + clickable; fetch markdown via same-origin href
+	exportLink, err := page.Timeout(5 * time.Second).Element(`[data-testid="export-markdown"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	href, err := exportLink.Attribute("href")
+	if err != nil || href == nil || *href == "" {
+		t.Fatalf("export href missing: %v %v", href, err)
+	}
+
+	// Download via page evaluate fetch (cookie session attached)
+	result, err := page.Eval(`async (url) => {
+		const r = await fetch(url, { credentials: 'same-origin' });
+		const text = await r.text();
+		return { status: r.status, type: r.headers.get('content-type') || '', text: text };
+	}`, *href)
+	if err != nil {
+		t.Fatalf("export fetch: %v", err)
+	}
+	status := int(result.Value.Get("status").Num())
+	ctype := result.Value.Get("type").Str()
+	md := result.Value.Get("text").Str()
+	if status != 200 {
+		t.Fatalf("export status=%d", status)
+	}
+	if !strings.Contains(ctype, "markdown") {
+		t.Fatalf("content-type=%q", ctype)
+	}
+	if !strings.Contains(md, "- 病院に行った。") || !strings.Contains(md, "  - 病院") {
+		t.Fatalf("export body=%q", md)
+	}
+
+	// Queue still has entry after export
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="queue-entry"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue empty after export: %v\nhtml=%s", err, html)
+	}
+
+	// Clear all with dialog confirm
+	waitDialog, handleDialog := page.MustHandleDialog()
+	btn, err := page.Timeout(5 * time.Second).Element(`[data-testid="clear-all"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = btn.Click(proto.InputMouseButtonLeft, 1)
+	}()
+	waitDialog()
+	handleDialog(true, "")
+
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-empty"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-empty missing after clear: %v\nhtml=%s", err, html)
+	}
+	entries, err := page.Elements(`[data-testid="queue-entry"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries after clear=%d", len(entries))
+	}
+
+	// Clear all disabled when empty
+	clearBtn, err := page.Timeout(5 * time.Second).Element(`[data-testid="clear-all"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := clearBtn.Property("disabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !disabled.Bool() {
+		t.Fatal("clear-all should be disabled when queue empty")
+	}
+
+	// Empty export still works
+	result2, err := page.Eval(`async (url) => {
+		const r = await fetch(url, { credentials: 'same-origin' });
+		const text = await r.text();
+		return { status: r.status, text: text };
+	}`, *href)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int(result2.Value.Get("status").Num()) != 200 {
+		t.Fatalf("empty export status=%v", result2.Value.Get("status"))
+	}
+	if result2.Value.Get("text").Str() != "" {
+		t.Fatalf("empty export body=%q", result2.Value.Get("text").Str())
+	}
+}
+
 

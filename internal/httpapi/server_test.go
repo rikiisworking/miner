@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
@@ -104,6 +105,14 @@ func (m *memQueue) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bo
 	cp := e
 	cp.Unknowns = append([]string(nil), e.Unknowns...)
 	return cp, true, true, nil
+}
+
+func (m *memQueue) ClearAll() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.byID = map[string]ports.QueueEntry{}
+	m.order = nil
+	return nil
 }
 
 func newTestServer(t *testing.T) *httpapi.Server {
@@ -243,6 +252,43 @@ func TestUnlock_CorrectPIN_SetsSessionCookieAndShell(t *testing.T) {
 	}
 	if !strings.Contains(string(body2), `data-testid="app-shell"`) {
 		t.Fatalf("/home missing shell: %s", body2)
+	}
+}
+
+// Restart (new process) uses a fresh in-memory session store — old cookie must not unlock.
+func TestSession_InvalidatedOnServerRestart(t *testing.T) {
+	s1 := newTestServer(t)
+	cookies := unlockCookies(t, s1)
+
+	// Pre-restart: gated route OK
+	reqOK := httptest.NewRequest(http.MethodGet, "/home", nil)
+	for _, c := range cookies {
+		reqOK.AddCookie(c)
+	}
+	respOK, err := s1.App().Test(reqOK, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respOK.Body.Close()
+	if respOK.StatusCode != http.StatusOK {
+		t.Fatalf("pre-restart /home status=%d", respOK.StatusCode)
+	}
+
+	// New server instance = process restart (new memory session store)
+	s2 := newTestServer(t)
+	req2 := httptest.NewRequest(http.MethodGet, "/home", nil)
+	for _, c := range cookies {
+		req2.AddCookie(c)
+	}
+	req2.Header.Set("Accept", "application/json")
+	resp2, err := s2.App().Test(req2, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("post-restart /home status=%d want 401 body=%s", resp2.StatusCode, body)
 	}
 }
 
@@ -572,6 +618,192 @@ func extractAttr(html, near, attr string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+func TestExport_Authenticated_MarkdownUTF8_QueueUnchanged(t *testing.T) {
+	q := newMemQueue()
+	// Seed store directly — L2 asserts transport, not AddUnknown form round-trip.
+	t0 := mustParseTime(t, "2026-01-01T00:00:00Z")
+	if err := q.Create(ports.QueueEntry{
+		ID: "e1", Sentence: "病院に行った。", Unknowns: []string{"病院", "行った"}, FirstUnknownAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Create(ports.QueueEntry{
+		ID: "e2", Sentence: "今日は雨だ。", Unknowns: []string{"雨"}, FirstUnknownAt: t0.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestServerWith(t, analyzer.Stub{}, q)
+	cookies := unlockCookies(t, s)
+
+	before, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("setup entries=%d", len(before))
+	}
+
+	ereq := httptest.NewRequest(http.MethodGet, "/export", nil)
+	for _, c := range cookies {
+		ereq.AddCookie(c)
+	}
+	eresp, err := s.App().Test(ereq, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eresp.Body.Close()
+	body, _ := io.ReadAll(eresp.Body)
+	if eresp.StatusCode != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", eresp.StatusCode, body)
+	}
+	ct := eresp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "markdown") {
+		t.Fatalf("Content-Type=%q want markdown", ct)
+	}
+	cd := eresp.Header.Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "miner-export.md") {
+		t.Fatalf("Content-Disposition=%q", cd)
+	}
+	want := "- 病院に行った。\n  - 病院\n  - 行った\n- 今日は雨だ。\n  - 雨\n"
+	if string(body) != want {
+		t.Fatalf("export body:\n%s\nwant:\n%s", body, want)
+	}
+
+	after, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("export mutated queue: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func mustParseTime(t *testing.T, s string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
+}
+
+func TestExport_EmptyQueue_OKEmptyBody(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/export", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("want empty body, got %q", body)
+	}
+}
+
+func TestExport_Unauthenticated_Rejected(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/export", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+}
+
+func TestClearAll_EmptiesQueue_SecondClearSafe(t *testing.T) {
+	q := newMemQueue()
+	s := newTestServerWith(t, analyzer.Stub{}, q)
+	cookies := unlockCookies(t, s)
+
+	form := url.Values{"sentence": {"今日は雨だ。"}, "surface": {"雨"}}
+	req := httptest.NewRequest(http.MethodPost, "/unknowns", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	clear := func() *http.Response {
+		t.Helper()
+		creq := httptest.NewRequest(http.MethodPost, "/queue/clear", nil)
+		for _, c := range cookies {
+			creq.AddCookie(c)
+		}
+		cresp, err := s.App().Test(creq, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cresp
+	}
+
+	cresp := clear()
+	// Fiber Test may not follow redirects; accept 303 or 200
+	if cresp.StatusCode != http.StatusSeeOther && cresp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(cresp.Body)
+		cresp.Body.Close()
+		t.Fatalf("clear status=%d body=%s", cresp.StatusCode, body)
+	}
+	cresp.Body.Close()
+
+	list, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("after clear entries=%d", len(list))
+	}
+
+	cresp2 := clear()
+	if cresp2.StatusCode != http.StatusSeeOther && cresp2.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(cresp2.Body)
+		cresp2.Body.Close()
+		t.Fatalf("second clear status=%d body=%s", cresp2.StatusCode, body)
+	}
+	cresp2.Body.Close()
+}
+
+func TestQueuePage_ShowsExportAndClearControls(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if !strings.Contains(html, `data-testid="export-markdown"`) {
+		t.Fatalf("missing export control: %s", html)
+	}
+	if !strings.Contains(html, `data-testid="clear-all"`) {
+		t.Fatalf("missing clear-all control: %s", html)
+	}
+	if !strings.Contains(html, `disabled`) {
+		t.Fatalf("empty queue should disable clear-all: %s", html)
+	}
 }
 
 // Ensure file-backed store works end-to-end through HTTP (optional smoke).

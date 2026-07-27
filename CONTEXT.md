@@ -19,8 +19,8 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 | **Analyze pass / PassID** | Ephemeral id returned by each `AnalyzeSentence`. First `AddUnknown` with that pass creates the entry; later unknowns (or concurrent first-taps) with the same pass append. Not durable; not the queue entry id. |
 | **Unknown** | Surface form tapped from content-word list; stored as shown (not lemma). |
 | **Content word** | Token shown in list (nouns/verbs/adjectives/…); drop particles/aux/symbols. |
-| **Export document** | UTF-8 Markdown nested list; order by first-unknown-at. **Does not clear queue.** Ticket 04. |
-| **Clear all** | Separate control; confirm when N≥1; only way to wipe queue in v1. Ticket 04. |
+| **Export document** | UTF-8 Markdown nested list; order by first-unknown-at. **Does not clear queue.** `GET /export`. |
+| **Clear all** | Separate control; confirm when N≥1; only way to wipe queue in v1. `POST /queue/clear`. |
 
 Avoid: Card, SM-2 Review, lemma identity, Article/RSS Source (other products).
 

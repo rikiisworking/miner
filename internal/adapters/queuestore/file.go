@@ -103,6 +103,13 @@ func (f *File) List() ([]ports.QueueEntry, error) {
 	return out, nil
 }
 
+// ClearAll implements ports.QueueStore.
+func (f *File) ClearAll() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.save(fileDoc{Entries: []ports.QueueEntry{}})
+}
+
 // AppendUnknown implements ports.QueueStore — atomic read-modify-write under one lock.
 func (f *File) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, error) {
 	if id == "" {

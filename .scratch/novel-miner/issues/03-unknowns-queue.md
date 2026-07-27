@@ -4,43 +4,43 @@
 
 **Blocked by:** 02 — Sentence analyze (paste path): furigana + content-word list
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** `.scratch/novel-miner/spec.md`
 
 ### Feature
 
-- [ ] Tap content-word row adds surface as unknown; first unknown creates new entry id + sets first-unknown-at
-- [ ] Analyze without tapping creates no queue entry
-- [ ] Identical sentence text mined again creates a **separate** entry (no merge-by-text)
-- [ ] Duplicate tap of the same surface on the same entry does not create a second unknown
-- [ ] Learner gets clear feedback on save and on ignored duplicate
-- [ ] Queue view shows each entry (sentence + unknowns)
-- [ ] No remove-unknown / remove-entry controls in v1
-- [ ] Queue persists across process restart (QueueStore)
+- [x] Tap content-word row adds surface as unknown; first unknown creates new entry id + sets first-unknown-at
+- [x] Analyze without tapping creates no queue entry
+- [x] Identical sentence text mined again creates a **separate** entry (no merge-by-text)
+- [x] Duplicate tap of the same surface on the same entry does not create a second unknown
+- [x] Learner gets clear feedback on save and on ignored duplicate
+- [x] Queue view shows each entry (sentence + unknowns)
+- [x] No remove-unknown / remove-entry controls in v1
+- [x] Queue persists across process restart (QueueStore)
 
 ### Testing (required this ticket)
 
 **L1 unit / facade**
 
-- [ ] AddUnknown creates entry on first save; sets first-unknown-at
-- [ ] Analyze-only path leaves store empty
-- [ ] Second AddUnknown same surface same entry → no duplicate
-- [ ] Two working sentences with same text → two entry ids
-- [ ] Persistence contract: add → “restart” (new app instance, same store) → list still has entries (prefer real temp SQLite/file store for at least one test)
+- [x] AddUnknown creates entry on first save; sets first-unknown-at
+- [x] Analyze-only path leaves store empty
+- [x] Second AddUnknown same surface same entry → no duplicate
+- [x] Two working sentences with same text → two entry ids
+- [x] Persistence contract: add → “restart” (new app instance, same store) → list still has entries (prefer real temp SQLite/file store for at least one test)
 
 **L2 HTTP smoke**
 
-- [ ] Authenticated add-unknown → queue list reflects entry
-- [ ] Duplicate add → success or idempotent response; still one unknown
+- [x] Authenticated add-unknown → queue list reflects entry
+- [x] Duplicate add → success or idempotent response; still one unknown
 
 **L3 UI click smoke**
 
-- [ ] Analyze fixture sentence → click content-word → save feedback visible
-- [ ] Open queue → entry + unknown visible
-- [ ] Click same word again → duplicate feedback; count unchanged
+- [x] Analyze fixture sentence → click content-word → save feedback visible
+- [x] Open queue → entry + unknown visible
+- [x] Click same word again → duplicate feedback; count unchanged
 
 **Gate**
 
-- [ ] New tests committed with feature
-- [ ] Full suite (01–03) run green before ticket done
+- [x] New tests committed with feature
+- [x] Full suite (01–03) run green before ticket done

@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -124,6 +125,14 @@ func (m *memQueue) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bo
 	cp := e
 	cp.Unknowns = append([]string(nil), e.Unknowns...)
 	return cp, true, true, nil
+}
+
+func (m *memQueue) ClearAll() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.byID = map[string]ports.QueueEntry{}
+	m.order = nil
+	return nil
 }
 
 func newApp(t *testing.T, analyzer ports.JapaneseAnalyzer) *app.MiningApp {
@@ -543,5 +552,274 @@ func TestAddUnknown_EmptySurface_AndMissingEntry(t *testing.T) {
 	}
 	if _, err := m.AddUnknown("x", "本", "no-such-id", ""); !errors.Is(err, app.ErrEntryNotFound) {
 		t.Fatalf("missing entry: %v", err)
+	}
+}
+
+func TestExportMarkdown_NestedListShape(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := q.Create(ports.QueueEntry{
+		ID: "a", Sentence: "病院に行った。", Unknowns: []string{"病院", "行った"}, FirstUnknownAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Create(ports.QueueEntry{
+		ID: "b", Sentence: "今日は雨だ。", Unknowns: []string{"雨"}, FirstUnknownAt: t0.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "- 病院に行った。\n  - 病院\n  - 行った\n- 今日は雨だ。\n  - 雨\n"
+	if md != want {
+		t.Fatalf("export:\n%s\nwant:\n%s", md, want)
+	}
+}
+
+func TestExportMarkdown_OrderByFirstUnknownAt_ThenEntryID(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	t0 := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	// Insert reverse of expected export order.
+	for _, e := range []ports.QueueEntry{
+		{ID: "z-late", Sentence: "遅い。", Unknowns: []string{"遅い"}, FirstUnknownAt: t0.Add(2 * time.Minute)},
+		{ID: "b-tie", Sentence: "同刻B。", Unknowns: []string{"B"}, FirstUnknownAt: t0},
+		{ID: "a-tie", Sentence: "同刻A。", Unknowns: []string{"A"}, FirstUnknownAt: t0},
+		{ID: "m-mid", Sentence: "中間。", Unknowns: []string{"中"}, FirstUnknownAt: t0.Add(time.Minute)},
+	} {
+		if err := q.Create(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same timestamp: a-tie before b-tie (id ascending). Then mid, then late.
+	want := "- 同刻A。\n  - A\n- 同刻B。\n  - B\n- 中間。\n  - 中\n- 遅い。\n  - 遅い\n"
+	if md != want {
+		t.Fatalf("export:\n%s\nwant:\n%s", md, want)
+	}
+}
+
+func TestExportMarkdown_UnknownsFirstTapOrder(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	if err := q.Create(ports.QueueEntry{
+		ID: "e1", Sentence: "私は本を読む。", Unknowns: []string{"私", "本", "読む"},
+		FirstUnknownAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "- 私は本を読む。\n  - 私\n  - 本\n  - 読む\n"
+	if md != want {
+		t.Fatalf("got %q want %q", md, want)
+	}
+}
+
+func TestExportMarkdown_NewlineInSentence_Flattened(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	if err := q.Create(ports.QueueEntry{
+		ID: "e1", Sentence: "一行目\n二行目", Unknowns: []string{"一\n行"},
+		FirstUnknownAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No raw newlines inside list items — only structural newlines after each item.
+	want := "- 一行目 二行目\n  - 一 行\n"
+	if md != want {
+		t.Fatalf("got %q want %q", md, want)
+	}
+	// Exactly two lines of list content (sentence + one unknown) → 2 trailing newlines after items = 2 lines ending with \n
+	if strings.Count(md, "\n") != 2 {
+		t.Fatalf("newline count=%d body=%q", strings.Count(md, "\n"), md)
+	}
+}
+
+func TestExportMarkdown_SpecialChars_DoNotBreakListStructure(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	// Markdown-ish specials + a fake nested-list line inside sentence (newlines flattened).
+	sentence := "# heading *em* **bold** [x](y) `code`\n- fake bullet\n> quote"
+	surface := "*表面* #1 [a](b)"
+	if err := q.Create(ports.QueueEntry{
+		ID: "e1", Sentence: sentence, Unknowns: []string{surface, "普通"},
+		FirstUnknownAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(md, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want 3 list lines (1 sentence + 2 unknowns), got %d:\n%s", len(lines), md)
+	}
+	if !strings.HasPrefix(lines[0], "- ") {
+		t.Fatalf("top-level item: %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "  - ") || !strings.HasPrefix(lines[2], "  - ") {
+		t.Fatalf("nested items: %q / %q", lines[1], lines[2])
+	}
+	// Fake bullet from sentence must not become its own top-level list row.
+	topLevel := 0
+	for _, ln := range lines {
+		if strings.HasPrefix(ln, "- ") && !strings.HasPrefix(ln, "  - ") {
+			topLevel++
+		}
+	}
+	if topLevel != 1 {
+		t.Fatalf("top-level count=%d want 1 body=%q", topLevel, md)
+	}
+	if !strings.Contains(lines[0], "# heading") || !strings.Contains(lines[0], "fake bullet") {
+		t.Fatalf("sentence content lost: %q", lines[0])
+	}
+	if lines[1] != "  - "+surface {
+		t.Fatalf("unknown0=%q", lines[1])
+	}
+	if lines[2] != "  - 普通" {
+		t.Fatalf("unknown1=%q", lines[2])
+	}
+}
+
+func TestExportMarkdown_SameSentenceText_TwoEntries(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	sentence := "同じ文。"
+	if err := q.Create(ports.QueueEntry{
+		ID: "e1", Sentence: sentence, Unknowns: []string{"同"}, FirstUnknownAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Create(ports.QueueEntry{
+		ID: "e2", Sentence: sentence, Unknowns: []string{"文"}, FirstUnknownAt: t0.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "- 同じ文。\n  - 同\n- 同じ文。\n  - 文\n"
+	if md != want {
+		t.Fatalf("got %q want %q", md, want)
+	}
+}
+
+func TestExportMarkdown_EmptyQueue_EmptyDocument(t *testing.T) {
+	m := newApp(t, nil)
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md != "" {
+		t.Fatalf("want empty document, got %q", md)
+	}
+}
+
+func TestExportMarkdown_SkipsZeroUnknownEntries_LeavesStoreUnchanged(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := q.Create(ports.QueueEntry{
+		ID: "empty", Sentence: "空。", Unknowns: []string{}, FirstUnknownAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Create(ports.QueueEntry{
+		ID: "ok", Sentence: "有る。", Unknowns: []string{"有"}, FirstUnknownAt: t0.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md != "- 有る。\n  - 有\n" {
+		t.Fatalf("md=%q", md)
+	}
+	// Re-export same
+	md2, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md2 != md {
+		t.Fatal("re-export must match")
+	}
+	after, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("store mutated: before=%d after=%d", len(before), len(after))
+	}
+	if len(after) != 2 {
+		t.Fatalf("want 2 entries still, got %d", len(after))
+	}
+}
+
+func TestClearAll_EmptiesStore_AndNoOpWhenEmpty(t *testing.T) {
+	q := newMemQueue()
+	m := newAppWithQueue(t, nil, q)
+	if _, err := m.AddUnknown("病院に行った。", "病院", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.AddUnknown("今日は雨だ。", "雨", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("setup entries=%d", len(list))
+	}
+
+	if err := m.ClearAll(); err != nil {
+		t.Fatal(err)
+	}
+	list, err = m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("after clear entries=%d", len(list))
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil || md != "" {
+		t.Fatalf("export after clear: md=%q err=%v", md, err)
+	}
+
+	// Second clear is no-op
+	if err := m.ClearAll(); err != nil {
+		t.Fatal(err)
+	}
+	list, err = m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("second clear entries=%d", len(list))
 	}
 }

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — LAN app shell + PIN gate
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** `.scratch/novel-miner/spec.md`
 
@@ -12,34 +12,34 @@
 
 ### Feature
 
-- [ ] Authenticated user can enter/edit sentence text and trigger analysis
-- [ ] Analyzed sentence is displayable with **HTML ruby** furigana (readings aligned to surfaces)
-- [ ] Content-word list shows surface + reading only for content words (not bare particles)
-- [ ] Baseline filter rule is applied/documented (stub flag in tests; adapter maps real tags later)
-- [ ] MiningApp AnalyzeSentence (or equivalent) is the behavior under test; analyzer is a port
-- [ ] Analysis failure surfaces a clear error in the UI
+- [x] Authenticated user can enter/edit sentence text and trigger analysis
+- [x] Analyzed sentence is displayable with **HTML ruby** furigana (readings aligned to surfaces)
+- [x] Content-word list shows surface + reading only for content words (not bare particles)
+- [x] Baseline filter rule is applied/documented (stub flag in tests; adapter maps real tags later)
+- [x] MiningApp AnalyzeSentence (or equivalent) is the behavior under test; analyzer is a port
+- [x] Analysis failure surfaces a clear error in the UI
 
 ### Testing (required this ticket)
 
 **L1 unit / facade**
 
-- [ ] Analyze with fake analyzer returns tokens needed for furigana + content list
-- [ ] Content-word filter: stub content tokens kept; particle/function stubs omitted
-- [ ] Analyzer error surfaces as controlled failure from MiningApp (no uncaught throw into silence)
+- [x] Analyze with fake analyzer returns tokens needed for furigana + content list
+- [x] Content-word filter: stub content tokens kept; particle/function stubs omitted
+- [x] Analyzer error surfaces as controlled failure from MiningApp (no uncaught throw into silence)
 
 **L2 HTTP smoke**
 
-- [ ] Authenticated analyze request with fixture sentence → 200 + expected payload shape
-- [ ] Unauthenticated analyze → rejected
-- [ ] Analyze failure path returns clear error status/body
+- [x] Authenticated analyze request with fixture sentence → 200 + expected payload shape
+- [x] Unauthenticated analyze → rejected
+- [x] Analyze failure path returns clear error status/body
 
 **L3 UI click smoke**
 
-- [ ] PIN unlock (reuse) → type/paste sentence → click analyze → HTML ruby (or equivalent reading aid markup) visible
-- [ ] Content-word rows visible for stubbed content tokens; no bare particle-only rows for fixture
-- [ ] Force analysis error (fake/test hook or bad path) → error message visible
+- [x] PIN unlock (reuse) → type/paste sentence → click analyze → HTML ruby (or equivalent reading aid markup) visible
+- [x] Content-word rows visible for stubbed content tokens; no bare particle-only rows for fixture
+- [x] Force analysis error (fake/test hook or bad path) → error message visible
 
 **Gate**
 
-- [ ] New tests committed with feature
-- [ ] Full suite (01+02) run green before ticket done
+- [x] New tests committed with feature
+- [x] Full suite (01+02) run green before ticket done

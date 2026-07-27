@@ -1,0 +1,25 @@
+# Go
+bin/
+dist/
+*.exe
+*.test
+*.out
+coverage.out
+vendor/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+tmp/

@@ -11,7 +11,12 @@ Plans live under [`.scratch/novel-miner/`](.scratch/novel-miner/spec.md).
 
 Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 
-## Ticket 01 — PIN shell
+## Tickets
+
+| # | Branch theme | Status |
+|---|--------------|--------|
+| 01 | LAN shell + PIN gate | done |
+| 02 | Sentence analyze (paste): furigana + content words | this branch |
 
 ### Configure
 
@@ -39,22 +44,33 @@ make run
 make test
 ```
 
-- **L1:** `internal/app` — MiningApp unlock with fake PinAuth  
-- **L2:** `internal/httpapi` — Fiber `app.Test` session / 401  
-- **L3:** `e2e` — headless browser (rod) clicks PIN form  
+- **L1:** `internal/app` — MiningApp unlock + `AnalyzeSentence` with fake ports  
+- **L2:** `internal/httpapi` — Fiber `app.Test` session / analyze HTMX fragment  
+- **L3:** `e2e` — headless browser (rod): PIN → paste → analyze (ruby + content list)
 
 L3 uses headless Chromium via [rod](https://go-rod.github.io/) (downloads browser once into `~/.cache/rod`).  
 HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not hang on external network.
+
+Analyzer is a **port** (`JapaneseAnalyzer`). Production wires `internal/adapters/analyzer.Stub` (fixture sentences + whole-text fallback) until a real local morphological engine is chosen. Content vs non-content uses an explicit flag on tokens; real adapters map POS tags into that flag.
+
+### Analyze (ticket 02)
+
+After PIN unlock: paste/type Japanese text → **Analyze** → HTMX swaps HTML with:
+
+- sentence as **HTML ruby** furigana  
+- **content-word** list (surface + reading; particles/function words omitted)
+
+`POST /analyze` requires session. Force-error hook for demos/tests: paste `__analyze_error__`.
 
 ## Layout
 
 ```
 cmd/miner/           # process entry
 internal/app/        # MiningApp facade (test seam)
-internal/ports/      # PinAuth, …
-internal/adapters/   # pinauth, later OCR/analyzer/store
+internal/ports/      # PinAuth, JapaneseAnalyzer, …
+internal/adapters/   # pinauth, analyzer (stub), later OCR/store
 internal/httpapi/    # Fiber + templates
-web/templates/       # HTML + HTMX
+web/templates/       # HTML + HTMX (shell, pin, analyze_result)
 e2e/                 # UI click smoke
 .scratch/novel-miner # product plans / tickets
 ```

@@ -13,7 +13,7 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 | **MiningApp** | Application facade for all product use-cases. **Primary test seam** (L1). |
 | **PinAuth** | Port: verify shared PIN. |
 | **OcrEngine** | Port: image bytes → plain text (local only). Not ticket 01. |
-| **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Not ticket 01. |
+| **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. |
 | **QueueStore** | Port: durable queue entries. Not ticket 01. |
 | **Queue entry** | Stable id + sentence text + ordered unique unknowns + first-unknown-at. New mining pass ⇒ new id (no merge-by-text). |
 | **Unknown** | Surface form tapped from content-word list; stored as shown (not lemma). |
@@ -32,8 +32,8 @@ Avoid: Card, SM-2 Review, lemma identity, Article/RSS Source (other products).
 ## Seams
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
-2. **Ports** (`internal/ports`) — PinAuth now; OCR / analyzer / store later. Adapters under `internal/adapters/`.
-3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file.
+2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer; OCR / store later. Adapters under `internal/adapters/` (pinauth, analyzer stub).
+3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. HTMX partials for analyze. Session gate deny for HTMX uses generic `auth_error` fragment (never a feature partial).
 4. **web.FS()** — templates + static assets (embed by default).
 
 ## Testing layers

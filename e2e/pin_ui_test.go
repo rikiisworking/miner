@@ -10,6 +10,7 @@ import (
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 
+	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
 	"github.com/rikiisworking/miner/web"
@@ -27,7 +28,7 @@ func startServer(t *testing.T) (baseURL string, shutdown func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := app.NewMiningApp(fakePinAuth{valid: "test-pin-ok"})
+	m := app.NewMiningApp(fakePinAuth{valid: "test-pin-ok"}, analyzer.Stub{})
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
 		WebFS:     web.FS(),
@@ -120,6 +121,17 @@ func fillPIN(t *testing.T, page *rod.Page, pin string) {
 	}
 }
 
+func unlockToShell(t *testing.T, browser *rod.Browser, base string) *rod.Page {
+	t.Helper()
+	page := openPINPage(t, browser, base)
+	fillPIN(t, page, "test-pin-ok")
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="app-shell"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("app-shell missing: %v\nhtml=%s", err, html)
+	}
+	return page
+}
+
 func TestUI_WrongPIN_ShowsError_NoShell(t *testing.T) {
 	base, shutdown := startServer(t)
 	t.Cleanup(shutdown)
@@ -160,5 +172,106 @@ func TestUI_CorrectPIN_ShowsShell(t *testing.T) {
 	}
 	if s, _ := ready.Text(); s == "" {
 		t.Fatal("expected shell ready text")
+	}
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="sentence-input"]`); err != nil {
+		t.Fatalf("sentence-input missing after unlock: %v", err)
+	}
+}
+
+func setSentence(t *testing.T, page *rod.Page, text string) {
+	t.Helper()
+	// Set value via DOM so special/underscore strings are reliable under headless rod.
+	_, err := page.Eval(`(t) => {
+		const el = document.querySelector('[data-testid="sentence-input"]');
+		if (!el) throw new Error('sentence-input missing');
+		el.focus();
+		el.value = t;
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+		el.dispatchEvent(new Event('change', { bubbles: true }));
+	}`, text)
+	if err != nil {
+		t.Fatalf("set sentence: %v", err)
+	}
+}
+
+func submitAnalyze(t *testing.T, page *rod.Page) {
+	t.Helper()
+	btn, err := page.Timeout(5 * time.Second).Element(`[data-testid="analyze-submit"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := btn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUI_Analyze_PasteFixture_RubyAndContentWords(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	setSentence(t, page, "私は本を読む。")
+	submitAnalyze(t, page)
+
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("analyze-success missing: %v\nhtml=%s", err, html)
+	}
+	// HTML ruby furigana present
+	ruby, err := page.Timeout(5 * time.Second).Element(`ruby[data-testid="ruby-token"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("ruby token missing: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := ruby.Text(); txt == "" {
+		t.Fatal("ruby token empty")
+	}
+	if _, err := page.Element(`rt`); err != nil {
+		t.Fatalf("rt (reading) missing: %v", err)
+	}
+
+	words, err := page.Elements(`[data-testid="content-word"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(words) != 3 {
+		html, _ := page.HTML()
+		t.Fatalf("content-word count=%d want 3\nhtml=%s", len(words), html)
+	}
+	// No bare particle-only content rows for fixture
+	for _, w := range words {
+		surface, err := w.Attribute("data-surface")
+		if err != nil || surface == nil {
+			t.Fatalf("content-word missing data-surface: %v", err)
+		}
+		if *surface == "は" || *surface == "を" || *surface == "。" {
+			t.Fatalf("particle/punct must not be content-word row: %s", *surface)
+		}
+	}
+}
+
+func TestUI_Analyze_ForceError_ShowsMessage(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	setSentence(t, page, analyzer.ForceErrorText)
+	submitAnalyze(t, page)
+
+	el, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-error"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("analyze-error missing: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := el.Text(); txt == "" {
+		t.Fatal("expected analyze error text")
+	}
+	has, _, _ := page.Has(`[data-testid="analyze-success"]`)
+	if has {
+		t.Fatal("analyze-success must not show on forced error")
 	}
 }

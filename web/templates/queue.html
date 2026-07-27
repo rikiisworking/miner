@@ -1,0 +1,51 @@
+{{define "queue"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Queue · miner</title>
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 1rem; max-width: 32rem; margin-inline: auto; line-height: 1.4; }
+    h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.05rem; margin: 0 0 0.35rem; }
+    .muted { opacity: 0.75; font-size: 0.95rem; }
+    nav { margin-bottom: 1rem; display: flex; gap: 1rem; }
+    nav a { color: inherit; font-weight: 600; }
+    .entry {
+      border: 1px solid #8884; border-radius: 0.5rem; padding: 0.85rem 0.75rem;
+      margin: 0.75rem 0;
+    }
+    .entry .sentence { font-size: 1.1rem; margin: 0 0 0.5rem; word-break: break-word; }
+    .unknowns { list-style: disc; padding-left: 1.25rem; margin: 0; }
+    .unknowns li { margin: 0.25rem 0; font-size: 1.05rem; min-height: 1.75rem; }
+  </style>
+</head>
+<body>
+<main data-testid="queue-page">
+  <nav>
+    <a href="/home" data-testid="nav-home">Mine</a>
+    <a href="/queue" data-testid="nav-queue" aria-current="page">Queue</a>
+  </nav>
+  <h1>Queue</h1>
+  {{if not .Entries}}
+  <p class="muted" data-testid="queue-empty">No unknowns saved yet. Analyze a sentence and tap a content word.</p>
+  {{else}}
+  <p class="muted" data-testid="queue-count">{{len .Entries}} entr{{if eq (len .Entries) 1}}y{{else}}ies{{end}}</p>
+  <div data-testid="queue-list">
+    {{- range .Entries}}
+    <article class="entry" data-testid="queue-entry" data-entry-id="{{.ID}}">
+      <p class="sentence" lang="ja" data-testid="queue-sentence">{{.Sentence}}</p>
+      <ul class="unknowns" data-testid="queue-unknowns">
+        {{- range .Unknowns}}
+        <li data-testid="queue-unknown" data-surface="{{.}}">{{.}}</li>
+        {{- end}}
+      </ul>
+    </article>
+    {{- end}}
+  </div>
+  {{end}}
+</main>
+</body>
+</html>{{end}}

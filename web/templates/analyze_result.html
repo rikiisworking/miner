@@ -2,7 +2,7 @@
 {{if .Error}}
 <div class="error" data-testid="analyze-error" role="alert">{{.Error}}</div>
 {{else}}
-<div data-testid="analyze-success">
+<div data-testid="analyze-success" id="analyze-success">
   <p class="furigana" data-testid="furigana-sentence" lang="ja">
     {{- range .Tokens -}}
       {{- if .Reading -}}
@@ -12,12 +12,27 @@
       {{- end -}}
     {{- end -}}
   </p>
+  {{/* pass_id binds first-tap create; entry_id filled after first save (OOB) */}}
+  <input type="hidden" name="pass_id" id="pass_id" value="{{.PassID}}" data-testid="pass-id">
+  <input type="hidden" name="entry_id" id="entry_id" value="{{.EntryID}}" data-testid="entry-id">
+  <div id="unknown-feedback" data-testid="unknown-feedback-slot" aria-live="polite"></div>
   <h2>Content words</h2>
   <ul class="content-list" data-testid="content-words">
     {{- range .ContentWords}}
     <li data-testid="content-word" data-surface="{{.Surface}}">
-      <span class="surface">{{.Surface}}</span>
-      {{- if .Reading}}<span class="reading" data-testid="content-reading">{{.Reading}}</span>{{end}}
+      <form method="post" action="/unknowns"
+            hx-post="/unknowns"
+            hx-target="#unknown-feedback"
+            hx-swap="innerHTML"
+            hx-include="#entry_id, #pass_id"
+            hx-sync="#analyze-success:queue">
+        <input type="hidden" name="sentence" value="{{$.Sentence}}">
+        <input type="hidden" name="surface" value="{{.Surface}}">
+        <button type="submit" class="content-word-btn" data-testid="mark-unknown" data-surface="{{.Surface}}">
+          <span class="surface">{{.Surface}}</span>
+          {{- if .Reading}}<span class="reading" data-testid="content-reading">{{.Reading}}</span>{{end}}
+        </button>
+      </form>
     </li>
     {{- else}}
     <li class="muted" data-testid="content-words-empty">No content words found.</li>

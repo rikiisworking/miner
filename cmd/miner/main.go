@@ -6,10 +6,12 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
+	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
 	"github.com/rikiisworking/miner/web"
@@ -26,12 +28,25 @@ func main() {
 		addr = ":8080"
 	}
 
+	dataDir := os.Getenv("MINER_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		log.Fatalf("data dir: %v", err)
+	}
+	queuePath := filepath.Join(dataDir, "queue.json")
+
 	webFS, err := resolveWebFS()
 	if err != nil {
 		log.Fatalf("web assets: %v", err)
 	}
 
-	mining := app.NewMiningApp(pinauth.Static{Secret: pin}, analyzer.Stub{})
+	mining := app.NewMiningApp(
+		pinauth.Static{Secret: pin},
+		analyzer.Stub{},
+		queuestore.NewFile(queuePath),
+	)
 	srv, err := httpapi.New(httpapi.Config{
 		MiningApp: mining,
 		WebFS:     webFS,
@@ -42,7 +57,7 @@ func main() {
 	}
 
 	logLANHints(addr)
-	log.Printf("miner listening on %s (PIN gate ready)", addr)
+	log.Printf("miner listening on %s (queue=%s)", addr, queuePath)
 	if err := srv.Listen(); err != nil {
 		log.Fatal(err)
 	}

@@ -3,6 +3,8 @@ package e2e_test
 import (
 	"fmt"
 	"net"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
+	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
 	"github.com/rikiisworking/miner/web"
@@ -28,7 +31,12 @@ func startServer(t *testing.T) (baseURL string, shutdown func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := app.NewMiningApp(fakePinAuth{valid: "test-pin-ok"}, analyzer.Stub{})
+	queuePath := filepath.Join(t.TempDir(), "queue.json")
+	m := app.NewMiningApp(
+		fakePinAuth{valid: "test-pin-ok"},
+		analyzer.Stub{},
+		queuestore.NewFile(queuePath),
+	)
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
 		WebFS:     web.FS(),
@@ -275,3 +283,131 @@ func TestUI_Analyze_ForceError_ShowsMessage(t *testing.T) {
 		t.Fatal("analyze-success must not show on forced error")
 	}
 }
+
+func clickMarkUnknown(t *testing.T, page *rod.Page, surface string) {
+	t.Helper()
+	sel := fmt.Sprintf(`[data-testid="mark-unknown"][data-surface="%s"]`, surface)
+	btn, err := page.Timeout(5 * time.Second).Element(sel)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("mark-unknown %q missing: %v\nhtml=%s", surface, err, html)
+	}
+	if err := btn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUI_MarkUnknown_SaveFeedback_AndQueue(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	setSentence(t, page, "私は本を読む。")
+	submitAnalyze(t, page)
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("analyze-success missing: %v\nhtml=%s", err, html)
+	}
+
+	clickMarkUnknown(t, page, "本")
+
+	fb, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="saved"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("save feedback missing: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := fb.Text(); !strings.Contains(txt, "本") {
+		t.Fatalf("feedback text=%q", txt)
+	}
+
+	// Open queue
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-page"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-page missing: %v\nhtml=%s", err, html)
+	}
+	entry, err := page.Timeout(5 * time.Second).Element(`[data-testid="queue-entry"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-entry missing: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := entry.Text(); !strings.Contains(txt, "私は本を読む。") || !strings.Contains(txt, "本") {
+		t.Fatalf("queue entry text=%q", txt)
+	}
+	unk, err := page.Elements(`[data-testid="queue-unknown"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unk) != 1 {
+		t.Fatalf("queue-unknown count=%d want 1", len(unk))
+	}
+}
+
+func TestUI_MarkUnknown_DuplicateFeedback_CountUnchanged(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	setSentence(t, page, "病院に行った。")
+	submitAnalyze(t, page)
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		t.Fatal(err)
+	}
+
+	clickMarkUnknown(t, page, "病院")
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="saved"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("save feedback: %v\nhtml=%s", err, html)
+	}
+
+	// Wait for OOB entry_id update so second tap appends same entry.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		el, err := page.Element(`[data-testid="entry-id"]`)
+		if err == nil {
+			v, err := el.Property("value")
+			if err == nil && v.Str() != "" {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+
+	clickMarkUnknown(t, page, "病院")
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="duplicate"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("duplicate feedback: %v\nhtml=%s", err, html)
+	}
+
+	// Queue still one unknown
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-page"]`); err != nil {
+		t.Fatal(err)
+	}
+	unk, err := page.Elements(`[data-testid="queue-unknown"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unk) != 1 {
+		html, _ := page.HTML()
+		t.Fatalf("after dup count=%d want 1\nhtml=%s", len(unk), html)
+	}
+}
+
+

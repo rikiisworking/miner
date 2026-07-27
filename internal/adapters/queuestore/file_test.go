@@ -111,3 +111,36 @@ func TestFile_AppendUnknown_AtomicAndDedupe(t *testing.T) {
 		t.Fatalf("missing: found=%v err=%v", found, err)
 	}
 }
+
+func TestFile_ClearAll(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.json")
+	store := queuestore.NewFile(path)
+	if err := store.Create(ports.QueueEntry{
+		ID: "e1", Sentence: "s", Unknowns: []string{"A"}, FirstUnknownAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClearAll(); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("after clear len=%d", len(list))
+	}
+	// No-op when empty
+	if err := store.ClearAll(); err != nil {
+		t.Fatal(err)
+	}
+	// Survives reopen
+	store2 := queuestore.NewFile(path)
+	list, err = store2.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("reopen after clear len=%d", len(list))
+	}
+}

@@ -18,8 +18,9 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 |---|--------------|--------|
 | 01 | LAN shell + PIN gate | done |
 | 02 | Sentence analyze (paste): furigana + content words | done |
-| 03 | Mark unknowns → durable queue | this branch |
-| 04 | Export Markdown (+ Clear all) | next |
+| 03 | Mark unknowns → durable queue | done |
+| 04 | Export Markdown (+ Clear all) | done (text-only path complete) |
+| 05+ | Page text / OCR / camera / hardening | next |
 
 ### Configure
 
@@ -50,21 +51,23 @@ Queue survives process restart (file under `MINER_DATA_DIR`). Session cookie doe
 make test
 ```
 
-- **L1:** `internal/app` — MiningApp unlock / analyze / `AddUnknown` / `ListQueue` (in-memory + real file store)  
-- **L2:** `internal/httpapi` — Fiber `app.Test` session / analyze / unknowns / queue  
-- **L3:** `e2e` — headless browser (rod): PIN → analyze → mark unknown → queue (incl. duplicate feedback)
+- **L1:** `internal/app` — MiningApp unlock / analyze / `AddUnknown` / `ListQueue` / `ExportMarkdown` / `ClearAll` (in-memory + real file store)  
+- **L2:** `internal/httpapi` — Fiber `app.Test` session / analyze / unknowns / queue / export / clear  
+- **L3:** `e2e` — headless browser (rod): PIN → analyze → mark unknown → queue → export → clear all
 
 L3 uses headless Chromium via [rod](https://go-rod.github.io/) (downloads browser once into `~/.cache/rod`).  
 HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not hang on external network.
 
-### Learner flow (so far)
+### Learner flow (text-only path)
 
 1. **PIN** unlock → mining shell  
 2. **Paste** a Japanese sentence → **Analyze** → HTML ruby furigana + content-word list  
 3. **Tap** a content-word row → save as unknown (feedback on save / duplicate)  
-4. **Queue** nav → list of entries (sentence + unknowns)
+4. **Queue** nav → list of entries (sentence + unknowns)  
+5. **Export Markdown** → download UTF-8 nested list (queue unchanged)  
+6. **Clear all** → confirm → wipe queue (disabled when empty)
 
-No per-unknown/per-entry remove in v1. Export Markdown and Clear all land in ticket 04.
+No per-unknown/per-entry remove in v1.
 
 ### Analyze (ticket 02)
 
@@ -98,9 +101,20 @@ Routes (session required):
 |--------|------|----------------|
 | `POST` | `/analyze` | form: `sentence` → furigana + content words + `pass_id` |
 | `POST` | `/unknowns` | form: `sentence`, `surface`, optional `entry_id`, optional `pass_id` |
-| `GET` | `/queue` | HTML list of entries |
+| `GET` | `/queue` | HTML list of entries + Export / Clear all |
+| `GET` | `/export` | UTF-8 Markdown download (`text/markdown`; queue unchanged) |
+| `POST` | `/queue/clear` | wipe entire queue (UI confirms when N≥1) |
 
 UI: **Mine** / **Queue** nav; save vs duplicate feedback under the content-word list.
+
+### Export + Clear all (ticket 04)
+
+Queue page controls:
+
+- **Export Markdown** — `GET /export`; nested list ordered by `first-unknown-at` (tie-break entry id); unknowns in first-tap order; empty queue returns empty document  
+- **Clear all** — `POST /queue/clear` after browser confirm (`Clear all N entries?`); disabled when empty  
+
+Newlines inside sentence/surface text are flattened to spaces so list structure stays intact.
 
 ## Layout
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/rikiisworking/miner/internal/ports"
@@ -103,6 +104,13 @@ func (f *File) List() ([]ports.QueueEntry, error) {
 	return out, nil
 }
 
+// ClearAll implements ports.QueueStore.
+func (f *File) ClearAll() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.save(fileDoc{Entries: []ports.QueueEntry{}})
+}
+
 // AppendUnknown implements ports.QueueStore — atomic read-modify-write under one lock.
 func (f *File) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, error) {
 	if id == "" {
@@ -170,13 +178,22 @@ func (f *File) save(doc fileDoc) error {
 	return os.Rename(tmp, f.path)
 }
 
+// copyEntry deep-copies entry fields. Strings are cloned so callers that pass
+// request-scoped buffers (e.g. Fiber FormValue) cannot corrupt stored data
+// when the next request reuses the buffer.
 func copyEntry(e ports.QueueEntry) ports.QueueEntry {
-	out := e
-	if e.Unknowns != nil {
-		out.Unknowns = make([]string, len(e.Unknowns))
-		copy(out.Unknowns, e.Unknowns)
-	} else {
+	out := ports.QueueEntry{
+		ID:             strings.Clone(e.ID),
+		Sentence:       strings.Clone(e.Sentence),
+		FirstUnknownAt: e.FirstUnknownAt,
+	}
+	if len(e.Unknowns) == 0 {
 		out.Unknowns = []string{}
+		return out
+	}
+	out.Unknowns = make([]string, len(e.Unknowns))
+	for i, u := range e.Unknowns {
+		out.Unknowns[i] = strings.Clone(u)
 	}
 	return out
 }

@@ -13,6 +13,24 @@
     .muted { opacity: 0.75; font-size: 0.95rem; }
     nav { margin-bottom: 1rem; display: flex; gap: 1rem; }
     nav a { color: inherit; font-weight: 600; }
+    .actions {
+      display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0;
+    }
+    .actions a, .actions button {
+      display: block; width: 100%; box-sizing: border-box; font-size: 1.1rem;
+      padding: 0.85rem 1rem; border-radius: 0.5rem; border: 0; font-weight: 600;
+      text-align: center; text-decoration: none; cursor: pointer;
+    }
+    .actions a.export {
+      background: #1a5fb4; color: #fff;
+    }
+    .actions button.clear {
+      background: transparent; color: inherit; border: 1px solid #8886;
+    }
+    .actions button.clear:disabled,
+    .actions a.export[aria-disabled="true"] {
+      opacity: 0.45; cursor: not-allowed; pointer-events: none;
+    }
     .entry {
       border: 1px solid #8884; border-radius: 0.5rem; padding: 0.85rem 0.75rem;
       margin: 0.75rem 0;
@@ -29,6 +47,19 @@
     <a href="/queue" data-testid="nav-queue" aria-current="page">Queue</a>
   </nav>
   <h1>Queue</h1>
+  <div class="actions" data-testid="queue-actions">
+    <a href="/export" class="export" data-testid="export-markdown">Export Markdown</a>
+    <form method="post" action="/queue/clear" data-testid="clear-all-form">
+      {{if .Entries}}
+      <button type="submit" class="clear" data-testid="clear-all"
+              onclick="return confirm('Clear all {{len .Entries}} entr{{if eq (len .Entries) 1}}y{{else}}ies{{end}}?')">
+        Clear all
+      </button>
+      {{else}}
+      <button type="submit" class="clear" data-testid="clear-all" disabled>Clear all</button>
+      {{end}}
+    </form>
+  </div>
   {{if not .Entries}}
   <p class="muted" data-testid="queue-empty">No unknowns saved yet. Analyze a sentence and tap a content word.</p>
   {{else}}

@@ -93,6 +93,8 @@ func New(cfg Config) (*Server, error) {
 	f.Post("/analyze", s.requireAuth, s.handleAnalyze)
 	f.Post("/unknowns", s.requireAuth, s.handleAddUnknown)
 	f.Get("/queue", s.requireAuth, s.handleQueue)
+	f.Get("/export", s.requireAuth, s.handleExport)
+	f.Post("/queue/clear", s.requireAuth, s.handleClearQueue)
 
 	s.fiber = f
 	return s, nil
@@ -225,6 +227,33 @@ func (s *Server) handleQueue(c *fiber.Ctx) error {
 	return s.render(c, "queue", map[string]any{
 		"Entries": entries,
 	})
+}
+
+func (s *Server) handleExport(c *fiber.Ctx) error {
+	md, err := s.app.ExportMarkdown()
+	if err != nil {
+		return err
+	}
+	c.Set("Content-Type", "text/markdown; charset=utf-8")
+	c.Set("Content-Disposition", `attachment; filename="miner-export.md"`)
+	return c.SendString(md)
+}
+
+func (s *Server) handleClearQueue(c *fiber.Ctx) error {
+	if err := s.app.ClearAll(); err != nil {
+		return err
+	}
+	// Prefer redirect so non-HTMX form POST lands on empty queue page.
+	if c.Get("HX-Request") == "true" {
+		entries, err := s.app.ListQueue()
+		if err != nil {
+			return err
+		}
+		return s.render(c, "queue", map[string]any{
+			"Entries": entries,
+		})
+	}
+	return c.Redirect("/queue", fiber.StatusSeeOther)
 }
 
 func (s *Server) requireAuth(c *fiber.Ctx) error {

@@ -84,16 +84,20 @@ Known stub fixtures: `私は本を読む。`, `病院に行った。`.
 After analyze: tap a content-word row → immediate save as unknown (surface form as shown). Rules:
 
 - Analyze/browse alone does **not** write the queue  
-- First successful unknown for a working sentence creates a **new** entry id + `first-unknown-at`  
-- Further unknowns append on that entry (first-tap order); duplicate surface ignored with feedback  
-- Same sentence text mined again (new first unknown, empty `entry_id`) → **separate** entry (no merge-by-text)  
-- Queue persists across server restart via **QueueStore** file adapter  
+- Each analyze result carries an ephemeral **`pass_id`** (not the queue entry id)  
+- First successful unknown for a pass creates a **new** queue entry id + `first-unknown-at`  
+- Further unknowns on that entry append (first-tap order); duplicate surface ignored with feedback  
+- Concurrent/fast multi-taps with the **same** `pass_id` still share **one** entry (server binds pass → entry; UI also queues HTMX with `hx-sync`)  
+- Re-analyze (new `pass_id`), even with identical sentence text → **separate** entry (no merge-by-text)  
+- Appends use atomic **`QueueStore.AppendUnknown`** (no lost unknowns under concurrent append)  
+- Queue persists across server restart via file store; `pass_id` map does **not** (in-memory only)  
 
 Routes (session required):
 
 | Method | Path | Body / notes |
 |--------|------|----------------|
-| `POST` | `/unknowns` | form: `sentence`, `surface`, optional `entry_id`, optional `pass_id` (from analyze; binds multi-tap to one entry) |
+| `POST` | `/analyze` | form: `sentence` → furigana + content words + `pass_id` |
+| `POST` | `/unknowns` | form: `sentence`, `surface`, optional `entry_id`, optional `pass_id` |
 | `GET` | `/queue` | HTML list of entries |
 
 UI: **Mine** / **Queue** nav; save vs duplicate feedback under the content-word list.

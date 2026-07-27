@@ -1,0 +1,43 @@
+{{define "pin"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Unlock · miner</title>
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 1rem; max-width: 32rem; margin-inline: auto; line-height: 1.4; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+    input[type="password"] {
+      width: 100%; box-sizing: border-box; font-size: 1.1rem; padding: 0.75rem;
+      border-radius: 0.5rem; border: 1px solid #8884; margin-bottom: 0.75rem;
+    }
+    button {
+      display: inline-block; width: 100%; font-size: 1.1rem; padding: 0.85rem 1rem;
+      border-radius: 0.5rem; border: 0; background: #1a5fb4; color: #fff; font-weight: 600;
+      cursor: pointer;
+    }
+    .error {
+      background: #c01c2840; padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 0.75rem;
+    }
+    .muted { opacity: 0.75; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+<main data-testid="pin-page">
+  <h1>miner</h1>
+  <p class="muted">Enter the shared PIN to unlock mining.</p>
+  {{if .Error}}
+  <div class="error" data-testid="pin-error" role="alert">{{.Error}}</div>
+  {{end}}
+  <form method="post" action="/unlock" data-testid="pin-form">
+    <label for="pin">PIN</label>
+    <input id="pin" name="pin" type="password" autocomplete="current-password"
+           inputmode="numeric" data-testid="pin-input" required autofocus>
+    <button type="submit" data-testid="pin-submit">Unlock</button>
+  </form>
+</main>
+</body>
+</html>{{end}}

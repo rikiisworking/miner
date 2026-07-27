@@ -1,0 +1,22 @@
+{{define "shell"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Home · miner</title>
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 1rem; max-width: 32rem; margin-inline: auto; line-height: 1.4; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    .muted { opacity: 0.75; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+<main class="shell" data-testid="app-shell">
+  <h1>miner</h1>
+  <p data-testid="shell-ready">Unlocked. Mining screens will land here.</p>
+  <p class="muted">Queue, capture, and export arrive in later tickets.</p>
+</main>
+</body>
+</html>{{end}}

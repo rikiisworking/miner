@@ -91,6 +91,8 @@ func New(cfg Config) (*Server, error) {
 	f.Post("/unlock", s.handleUnlock)
 	f.Get("/home", s.requireAuth, s.handleHome)
 	f.Post("/analyze", s.requireAuth, s.handleAnalyze)
+	f.Post("/unknowns", s.requireAuth, s.handleAddUnknown)
+	f.Get("/queue", s.requireAuth, s.handleQueue)
 
 	s.fiber = f
 	return s, nil
@@ -174,6 +176,54 @@ func (s *Server) handleAnalyze(c *fiber.Ctx) error {
 		"Sentence":     result.Sentence,
 		"Tokens":       result.Tokens,
 		"ContentWords": result.ContentWords,
+		"PassID":       result.PassID,
+		"EntryID":      "", // filled after first unknown
+	})
+}
+
+func (s *Server) handleAddUnknown(c *fiber.Ctx) error {
+	sentence := c.FormValue("sentence")
+	surface := c.FormValue("surface")
+	entryID := c.FormValue("entry_id")
+	passID := c.FormValue("pass_id")
+
+	res, err := s.app.AddUnknown(sentence, surface, entryID, passID)
+	if err != nil {
+		msg := "Could not save unknown."
+		status := fiber.StatusInternalServerError
+		if errors.Is(err, app.ErrEmptySurface) {
+			msg = "Missing word surface."
+			status = fiber.StatusBadRequest
+		} else if errors.Is(err, app.ErrEmptySentence) {
+			msg = "Missing sentence."
+			status = fiber.StatusBadRequest
+		} else if errors.Is(err, app.ErrEntryNotFound) {
+			msg = "Queue entry not found. Analyze again."
+			status = fiber.StatusNotFound
+		}
+		c.Status(status)
+		return s.render(c, "unknown_feedback", map[string]any{
+			"Error": msg,
+		})
+	}
+
+	return s.render(c, "unknown_feedback", map[string]any{
+		"Error":     "",
+		"EntryID":   res.EntryID,
+		"Surface":   res.Surface,
+		"Duplicate": res.Duplicate,
+		"Added":     res.Added,
+		"Created":   res.Created,
+	})
+}
+
+func (s *Server) handleQueue(c *fiber.Ctx) error {
+	entries, err := s.app.ListQueue()
+	if err != nil {
+		return err
+	}
+	return s.render(c, "queue", map[string]any{
+		"Entries": entries,
 	})
 }
 

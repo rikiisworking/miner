@@ -1,0 +1,17 @@
+{{define "unknown_feedback"}}
+{{if .Error}}
+<div class="error" data-testid="unknown-error" role="alert">{{.Error}}</div>
+{{else}}
+  {{if .Duplicate}}
+  <div class="feedback feedback-dup" data-testid="unknown-feedback" data-status="duplicate" role="status">
+    Already saved: {{.Surface}}
+  </div>
+  {{else}}
+  <div class="feedback feedback-ok" data-testid="unknown-feedback" data-status="saved" role="status">
+    Saved unknown: {{.Surface}}
+  </div>
+  {{end}}
+  {{/* OOB update entry_id so next taps append to the same entry */}}
+  <input type="hidden" name="entry_id" id="entry_id" value="{{.EntryID}}" data-testid="entry-id" hx-swap-oob="true">
+{{end}}
+{{end}}

@@ -7,21 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/ports"
 )
 
-// fakePinAuth is a test double for ports.PinAuth. It does not use production secrets.
-type fakePinAuth struct {
-	valid string
-}
-
-func (f fakePinAuth) Verify(pin string) bool {
-	return pin == f.valid
-}
-
 // fakeAnalyzer is a test double for ports.JapaneseAnalyzer.
+// Controllable tokens stay package-local; queue/pin use shared adapters.
 type fakeAnalyzer struct {
 	// byText maps exact sentence text to tokens. Explicit Content flags on tokens.
 	byText map[string][]ports.Token
@@ -46,98 +39,9 @@ func (f fakeAnalyzer) Analyze(text string) ([]ports.Token, error) {
 	return []ports.Token{{Surface: text, Reading: "", Content: true}}, nil
 }
 
-type memQueue struct {
-	mu    sync.Mutex
-	byID  map[string]ports.QueueEntry
-	order []string
-}
-
-func newMemQueue() *memQueue {
-	return &memQueue{byID: map[string]ports.QueueEntry{}}
-}
-
-func (m *memQueue) Create(entry ports.QueueEntry) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.byID[entry.ID]; ok {
-		return errors.New("duplicate id")
-	}
-	cp := entry
-	cp.Unknowns = append([]string(nil), entry.Unknowns...)
-	m.byID[entry.ID] = cp
-	m.order = append(m.order, entry.ID)
-	return nil
-}
-
-func (m *memQueue) Update(entry ports.QueueEntry) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.byID[entry.ID]; !ok {
-		return errors.New("missing id")
-	}
-	cp := entry
-	cp.Unknowns = append([]string(nil), entry.Unknowns...)
-	m.byID[entry.ID] = cp
-	return nil
-}
-
-func (m *memQueue) Get(id string) (ports.QueueEntry, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	e, ok := m.byID[id]
-	if !ok {
-		return ports.QueueEntry{}, false, nil
-	}
-	cp := e
-	cp.Unknowns = append([]string(nil), e.Unknowns...)
-	return cp, true, nil
-}
-
-func (m *memQueue) List() ([]ports.QueueEntry, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]ports.QueueEntry, 0, len(m.order))
-	for _, id := range m.order {
-		e := m.byID[id]
-		cp := e
-		cp.Unknowns = append([]string(nil), e.Unknowns...)
-		out = append(out, cp)
-	}
-	return out, nil
-}
-
-func (m *memQueue) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	e, ok := m.byID[id]
-	if !ok {
-		return ports.QueueEntry{}, false, false, nil
-	}
-	for _, u := range e.Unknowns {
-		if u == surface {
-			cp := e
-			cp.Unknowns = append([]string(nil), e.Unknowns...)
-			return cp, false, true, nil
-		}
-	}
-	e.Unknowns = append(append([]string(nil), e.Unknowns...), surface)
-	m.byID[id] = e
-	cp := e
-	cp.Unknowns = append([]string(nil), e.Unknowns...)
-	return cp, true, true, nil
-}
-
-func (m *memQueue) ClearAll() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.byID = map[string]ports.QueueEntry{}
-	m.order = nil
-	return nil
-}
-
 func newApp(t *testing.T, analyzer ports.JapaneseAnalyzer) *app.MiningApp {
 	t.Helper()
-	return newAppWithQueue(t, analyzer, newMemQueue())
+	return newAppWithQueue(t, analyzer, queuestore.NewMem())
 }
 
 func newAppWithQueue(t *testing.T, analyzer ports.JapaneseAnalyzer, queue ports.QueueStore) *app.MiningApp {
@@ -145,7 +49,7 @@ func newAppWithQueue(t *testing.T, analyzer ports.JapaneseAnalyzer, queue ports.
 	if analyzer == nil {
 		analyzer = fakeAnalyzer{}
 	}
-	return app.NewMiningApp(fakePinAuth{valid: "test-pin-ok"}, analyzer, queue)
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue)
 }
 
 func TestUnlock_AcceptsCorrectPIN(t *testing.T) {
@@ -271,7 +175,7 @@ func TestAnalyzeSentence_EmptySentence(t *testing.T) {
 }
 
 func TestAnalyzeOnly_LeavesQueueEmpty(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 
 	if _, err := m.AnalyzeSentence("私は本を読む。"); err != nil {
@@ -556,7 +460,7 @@ func TestAddUnknown_EmptySurface_AndMissingEntry(t *testing.T) {
 }
 
 func TestExportMarkdown_NestedListShape(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := q.Create(ports.QueueEntry{
@@ -581,7 +485,7 @@ func TestExportMarkdown_NestedListShape(t *testing.T) {
 }
 
 func TestExportMarkdown_OrderByFirstUnknownAt_ThenEntryID(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	t0 := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	// Insert reverse of expected export order.
@@ -608,7 +512,7 @@ func TestExportMarkdown_OrderByFirstUnknownAt_ThenEntryID(t *testing.T) {
 }
 
 func TestExportMarkdown_UnknownsFirstTapOrder(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	if err := q.Create(ports.QueueEntry{
 		ID: "e1", Sentence: "私は本を読む。", Unknowns: []string{"私", "本", "読む"},
@@ -627,7 +531,7 @@ func TestExportMarkdown_UnknownsFirstTapOrder(t *testing.T) {
 }
 
 func TestExportMarkdown_NewlineInSentence_Flattened(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	if err := q.Create(ports.QueueEntry{
 		ID: "e1", Sentence: "一行目\n二行目", Unknowns: []string{"一\n行"},
@@ -651,7 +555,7 @@ func TestExportMarkdown_NewlineInSentence_Flattened(t *testing.T) {
 }
 
 func TestExportMarkdown_SpecialChars_DoNotBreakListStructure(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	// Markdown-ish specials + a fake nested-list line inside sentence (newlines flattened).
 	sentence := "# heading *em* **bold** [x](y) `code`\n- fake bullet\n> quote"
@@ -698,7 +602,7 @@ func TestExportMarkdown_SpecialChars_DoNotBreakListStructure(t *testing.T) {
 }
 
 func TestExportMarkdown_SameSentenceText_TwoEntries(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	sentence := "同じ文。"
@@ -734,7 +638,7 @@ func TestExportMarkdown_EmptyQueue_EmptyDocument(t *testing.T) {
 }
 
 func TestExportMarkdown_SkipsZeroUnknownEntries_LeavesStoreUnchanged(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := q.Create(ports.QueueEntry{
@@ -780,7 +684,7 @@ func TestExportMarkdown_SkipsZeroUnknownEntries_LeavesStoreUnchanged(t *testing.
 }
 
 func TestClearAll_EmptiesStore_AndNoOpWhenEmpty(t *testing.T) {
-	q := newMemQueue()
+	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 	if _, err := m.AddUnknown("病院に行った。", "病院", "", ""); err != nil {
 		t.Fatal(err)

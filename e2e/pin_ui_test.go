@@ -13,17 +13,12 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
+	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
 	"github.com/rikiisworking/miner/web"
 )
-
-type fakePinAuth struct {
-	valid string
-}
-
-func (f fakePinAuth) Verify(pin string) bool { return pin == f.valid }
 
 func startServer(t *testing.T) (baseURL string, shutdown func()) {
 	t.Helper()
@@ -33,7 +28,7 @@ func startServer(t *testing.T) (baseURL string, shutdown func()) {
 	}
 	queuePath := filepath.Join(t.TempDir(), "queue.json")
 	m := app.NewMiningApp(
-		fakePinAuth{valid: "test-pin-ok"},
+		pinauth.Static{Secret: "test-pin-ok"},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
 	)

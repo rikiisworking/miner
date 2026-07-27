@@ -1,0 +1,6 @@
+{{define "auth_error"}}
+<div class="error" data-testid="auth-error" role="alert">
+  {{if .Error}}{{.Error}}{{else}}Session required. Enter PIN.{{end}}
+  <p class="muted" style="margin:0.5rem 0 0"><a href="/" data-testid="auth-error-home">Unlock</a></p>
+</div>
+{{end}}

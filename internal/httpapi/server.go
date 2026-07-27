@@ -38,7 +38,7 @@ type Config struct {
 	Addr  string
 }
 
-// New builds a Fiber app with PIN gate routes.
+// New builds a Fiber app with PIN gate and analyze routes.
 func New(cfg Config) (*Server, error) {
 	if cfg.MiningApp == nil {
 		return nil, errors.New("MiningApp is required")
@@ -90,6 +90,7 @@ func New(cfg Config) (*Server, error) {
 	f.Get("/", s.handleIndex)
 	f.Post("/unlock", s.handleUnlock)
 	f.Get("/home", s.requireAuth, s.handleHome)
+	f.Post("/analyze", s.requireAuth, s.handleAnalyze)
 
 	s.fiber = f
 	return s, nil
@@ -150,12 +151,45 @@ func (s *Server) handleHome(c *fiber.Ctx) error {
 	return s.render(c, "shell", nil)
 }
 
+func (s *Server) handleAnalyze(c *fiber.Ctx) error {
+	sentence := c.FormValue("sentence")
+	result, err := s.app.AnalyzeSentence(sentence)
+	if err != nil {
+		msg := "Analysis failed. Try again."
+		status := fiber.StatusUnprocessableEntity
+		if errors.Is(err, app.ErrEmptySentence) {
+			msg = "Enter a sentence to analyze."
+			status = fiber.StatusBadRequest
+		} else if errors.Is(err, app.ErrAnalyze) {
+			msg = "Analysis failed. The sentence could not be tokenized."
+		}
+		c.Status(status)
+		return s.render(c, "analyze_result", map[string]any{
+			"Error": msg,
+		})
+	}
+
+	return s.render(c, "analyze_result", map[string]any{
+		"Error":        "",
+		"Sentence":     result.Sentence,
+		"Tokens":       result.Tokens,
+		"ContentWords": result.ContentWords,
+	})
+}
+
 func (s *Server) requireAuth(c *fiber.Ctx) error {
 	ok, err := s.isAuthenticated(c)
 	if err != nil {
 		return err
 	}
 	if !ok {
+		// HTMX: generic auth fragment only — never a feature partial (analyze/queue/…).
+		if c.Get("HX-Request") == "true" {
+			c.Status(fiber.StatusUnauthorized)
+			return s.render(c, "auth_error", map[string]any{
+				"Error": "Session required. Enter PIN.",
+			})
+		}
 		accept := c.Get("Accept")
 		if accept == "" || strings.Contains(accept, "text/html") {
 			c.Status(fiber.StatusUnauthorized)

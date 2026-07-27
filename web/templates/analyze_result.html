@@ -1,0 +1,28 @@
+{{define "analyze_result"}}
+{{if .Error}}
+<div class="error" data-testid="analyze-error" role="alert">{{.Error}}</div>
+{{else}}
+<div data-testid="analyze-success">
+  <p class="furigana" data-testid="furigana-sentence" lang="ja">
+    {{- range .Tokens -}}
+      {{- if .Reading -}}
+        <ruby data-testid="ruby-token">{{.Surface}}<rt>{{.Reading}}</rt></ruby>
+      {{- else -}}
+        <span data-testid="plain-token">{{.Surface}}</span>
+      {{- end -}}
+    {{- end -}}
+  </p>
+  <h2>Content words</h2>
+  <ul class="content-list" data-testid="content-words">
+    {{- range .ContentWords}}
+    <li data-testid="content-word" data-surface="{{.Surface}}">
+      <span class="surface">{{.Surface}}</span>
+      {{- if .Reading}}<span class="reading" data-testid="content-reading">{{.Reading}}</span>{{end}}
+    </li>
+    {{- else}}
+    <li class="muted" data-testid="content-words-empty">No content words found.</li>
+    {{- end}}
+  </ul>
+</div>
+{{end}}
+{{end}}

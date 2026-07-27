@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
@@ -30,7 +31,7 @@ func main() {
 		log.Fatalf("web assets: %v", err)
 	}
 
-	mining := app.NewMiningApp(pinauth.Static{Secret: pin})
+	mining := app.NewMiningApp(pinauth.Static{Secret: pin}, analyzer.Stub{})
 	srv, err := httpapi.New(httpapi.Config{
 		MiningApp: mining,
 		WebFS:     webFS,

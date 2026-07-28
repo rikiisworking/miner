@@ -15,6 +15,15 @@ type QueueEntry struct {
 	FirstUnknownAt time.Time
 }
 
+// AppendResult is the outcome of QueueStore.AppendUnknown.
+type AppendResult struct {
+	Entry QueueEntry
+	// Added is true when surface was newly appended (false if already present).
+	Added bool
+	// Found is false when id is missing from the store.
+	Found bool
+}
+
 // QueueStore persists queue entries across process restart.
 // Product surface is intentionally narrow: create, list, atomic append, clear.
 // No Get/Update — MiningApp never needs generic CRUD; AppendUnknown owns mutation.
@@ -25,8 +34,7 @@ type QueueStore interface {
 	// List returns all entries (order not required). Export sorts by first-unknown-at.
 	List() ([]QueueEntry, error)
 	// AppendUnknown atomically appends surface if absent (single locked RMW).
-	// found is false when id is missing. added is false when surface already present.
-	AppendUnknown(id, surface string) (entry QueueEntry, added, found bool, err error)
+	AppendUnknown(id, surface string) (AppendResult, error)
 	// ClearAll deletes every entry. No-op when already empty.
 	ClearAll() error
 }

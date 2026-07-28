@@ -4,10 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"net/http"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
@@ -20,11 +18,13 @@ import (
 const (
 	sessionKeyAuth = "authenticated"
 	cookieName     = "miner_session"
+	// MultipartOverhead is BodyLimit headroom above MaxUploadBytes for framing.
+	MultipartOverhead = 512 * 1024
 )
 
 // Server is the Fiber HTTP adapter over MiningApp.
 type Server struct {
-	app       *app.MiningApp
+	mining    *app.MiningApp
 	fiber     *fiber.App
 	store     *session.Store
 	templates *template.Template
@@ -69,7 +69,7 @@ func New(cfg Config) (*Server, error) {
 	})
 
 	s := &Server{
-		app:       cfg.MiningApp,
+		mining:    cfg.MiningApp,
 		store:     sess,
 		templates: tmpl,
 		addr:      addr,
@@ -77,10 +77,9 @@ func New(cfg Config) (*Server, error) {
 
 	// BodyLimit must allow product MaxUploadBytes images plus multipart framing.
 	// Semantic oversize still rejected in MiningApp.IngestPage (L1).
-	const multipartOverhead = 512 * 1024
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
-		BodyLimit:             app.MaxUploadBytes + multipartOverhead,
+		BodyLimit:             app.MaxUploadBytes + MultipartOverhead,
 	})
 
 	staticFS, err := fs.Sub(cfg.WebFS, "static")
@@ -118,289 +117,4 @@ func (s *Server) Listen() error {
 // Shutdown stops the server.
 func (s *Server) Shutdown() error {
 	return s.fiber.Shutdown()
-}
-
-func (s *Server) handleIndex(c *fiber.Ctx) error {
-	ok, err := s.isAuthenticated(c)
-	if err != nil {
-		return err
-	}
-	if ok {
-		return s.render(c, "shell", nil)
-	}
-	return s.render(c, "pin", map[string]any{"Error": ""})
-}
-
-func (s *Server) handleUnlock(c *fiber.Ctx) error {
-	pin := c.FormValue("pin")
-	if err := s.app.Unlock(pin); err != nil {
-		if errors.Is(err, app.ErrInvalidPIN) {
-			c.Status(fiber.StatusUnauthorized)
-			return s.render(c, "pin", map[string]any{
-				"Error": "Incorrect PIN. Try again.",
-			})
-		}
-		return err
-	}
-
-	sess, err := s.store.Get(c)
-	if err != nil {
-		return err
-	}
-	sess.Set(sessionKeyAuth, true)
-	if err := sess.Save(); err != nil {
-		return err
-	}
-
-	return s.render(c, "shell", nil)
-}
-
-func (s *Server) handleHome(c *fiber.Ctx) error {
-	return s.render(c, "shell", nil)
-}
-
-// handlePageText proposes sentence candidates from multi-sentence page paste (ticket 05).
-// Ephemeral only — does not write the durable queue.
-func (s *Server) handlePageText(c *fiber.Ctx) error {
-	pageText := c.FormValue("page_text")
-	cands, err := s.app.ProposeSentences(pageText)
-	if err != nil {
-		if errors.Is(err, app.ErrEmptyPage) {
-			c.Status(fiber.StatusBadRequest)
-			return s.render(c, "sentence_candidates", map[string]any{
-				"Error":      "Enter page text to split into sentences.",
-				"Candidates": nil,
-			})
-		}
-		return err
-	}
-	return s.render(c, "sentence_candidates", map[string]any{
-		"Error":      "",
-		"Candidates": cands,
-	})
-}
-
-// handleIngest runs photo OCR via MiningApp.IngestPage (ticket 06).
-// Multipart field "image". Image bytes are not saved to disk; discarded after return.
-// Reuses sentence_candidates partial (same pick → analyze pipeline as page-text).
-func (s *Server) handleIngest(c *fiber.Ctx) error {
-	fh, err := c.FormFile("image")
-	if err != nil || fh == nil {
-		c.Status(fiber.StatusBadRequest)
-		return s.render(c, "sentence_candidates", map[string]any{
-			"Error":      "Choose an image of a novel page.",
-			"Candidates": nil,
-		})
-	}
-	// Header size is a cheap pre-check; MiningApp still enforces MaxUploadBytes on bytes.
-	if fh.Size > app.MaxUploadBytes {
-		c.Status(fiber.StatusRequestEntityTooLarge)
-		return s.render(c, "sentence_candidates", map[string]any{
-			"Error":      "Image too large (max 10 MB).",
-			"Candidates": nil,
-		})
-	}
-
-	f, err := fh.Open()
-	if err != nil {
-		c.Status(fiber.StatusBadRequest)
-		return s.render(c, "sentence_candidates", map[string]any{
-			"Error":      "Could not read the uploaded image.",
-			"Candidates": nil,
-		})
-	}
-	defer f.Close()
-
-	// Cap read so a lying Content-Length cannot blow memory past product + 1.
-	image, err := io.ReadAll(io.LimitReader(f, int64(app.MaxUploadBytes)+1))
-	if err != nil {
-		c.Status(fiber.StatusBadRequest)
-		return s.render(c, "sentence_candidates", map[string]any{
-			"Error":      "Could not read the uploaded image.",
-			"Candidates": nil,
-		})
-	}
-
-	ingested, err := s.app.IngestPage(image)
-	// Drop reference so large payloads can be GC'd after OCR (caller contract).
-	image = nil
-	if err != nil {
-		return s.renderIngestError(c, err)
-	}
-	return s.render(c, "sentence_candidates", map[string]any{
-		"Error":      "",
-		"Candidates": ingested.Candidates,
-	})
-}
-
-func (s *Server) renderIngestError(c *fiber.Ctx, err error) error {
-	msg := "Could not read text from the image. Try another photo or paste page text."
-	status := fiber.StatusUnprocessableEntity
-	switch {
-	case errors.Is(err, app.ErrPayloadTooLarge):
-		msg = "Image too large (max 10 MB)."
-		status = fiber.StatusRequestEntityTooLarge
-	case errors.Is(err, app.ErrIngestBusy):
-		msg = "Already processing a photo. Wait, then try again."
-		status = fiber.StatusConflict
-	case errors.Is(err, app.ErrEmptyPage):
-		msg = "No text found in the image. Try another photo or paste page text."
-		status = fiber.StatusBadRequest
-	case errors.Is(err, app.ErrOcrFailed):
-		msg = "Could not read text from the image. Try another photo or paste page text."
-		status = fiber.StatusUnprocessableEntity
-	}
-	c.Status(status)
-	return s.render(c, "sentence_candidates", map[string]any{
-		"Error":      msg,
-		"Candidates": nil,
-	})
-}
-
-func (s *Server) handleAnalyze(c *fiber.Ctx) error {
-	sentence := c.FormValue("sentence")
-	result, err := s.app.AnalyzeSentence(sentence)
-	if err != nil {
-		msg := "Analysis failed. Try again."
-		status := fiber.StatusUnprocessableEntity
-		if errors.Is(err, app.ErrEmptySentence) {
-			msg = "Enter a sentence to analyze."
-			status = fiber.StatusBadRequest
-		} else if errors.Is(err, app.ErrAnalyze) {
-			msg = "Analysis failed. The sentence could not be tokenized."
-		}
-		c.Status(status)
-		return s.render(c, "analyze_result", map[string]any{
-			"Error": msg,
-		})
-	}
-
-	return s.render(c, "analyze_result", map[string]any{
-		"Error":        "",
-		"Sentence":     result.Sentence,
-		"Tokens":       result.Tokens,
-		"ContentWords": result.ContentWords,
-		"PassID":       result.PassID,
-		"EntryID":      "", // filled after first unknown
-	})
-}
-
-func (s *Server) handleAddUnknown(c *fiber.Ctx) error {
-	sentence := c.FormValue("sentence")
-	surface := c.FormValue("surface")
-	entryID := c.FormValue("entry_id")
-	passID := c.FormValue("pass_id")
-
-	res, err := s.app.AddUnknown(sentence, surface, entryID, passID)
-	if err != nil {
-		msg := "Could not save unknown."
-		status := fiber.StatusInternalServerError
-		if errors.Is(err, app.ErrEmptySurface) {
-			msg = "Missing word surface."
-			status = fiber.StatusBadRequest
-		} else if errors.Is(err, app.ErrEmptySentence) {
-			msg = "Missing sentence."
-			status = fiber.StatusBadRequest
-		} else if errors.Is(err, app.ErrEntryNotFound) {
-			msg = "Queue entry not found. Analyze again."
-			status = fiber.StatusNotFound
-		}
-		c.Status(status)
-		return s.render(c, "unknown_feedback", map[string]any{
-			"Error": msg,
-		})
-	}
-
-	return s.render(c, "unknown_feedback", map[string]any{
-		"Error":     "",
-		"EntryID":   res.EntryID,
-		"Surface":   res.Surface,
-		"Duplicate": res.Duplicate,
-		"Added":     res.Added,
-		"Created":   res.Created,
-	})
-}
-
-func (s *Server) handleQueue(c *fiber.Ctx) error {
-	entries, err := s.app.ListQueue()
-	if err != nil {
-		return err
-	}
-	return s.render(c, "queue", map[string]any{
-		"Entries": entries,
-	})
-}
-
-func (s *Server) handleExport(c *fiber.Ctx) error {
-	md, err := s.app.ExportMarkdown()
-	if err != nil {
-		return err
-	}
-	c.Set("Content-Type", "text/markdown; charset=utf-8")
-	c.Set("Content-Disposition", `attachment; filename="miner-export.md"`)
-	return c.SendString(md)
-}
-
-func (s *Server) handleClearQueue(c *fiber.Ctx) error {
-	if err := s.app.ClearAll(); err != nil {
-		return err
-	}
-	// Prefer redirect so non-HTMX form POST lands on empty queue page.
-	if c.Get("HX-Request") == "true" {
-		entries, err := s.app.ListQueue()
-		if err != nil {
-			return err
-		}
-		return s.render(c, "queue", map[string]any{
-			"Entries": entries,
-		})
-	}
-	return c.Redirect("/queue", fiber.StatusSeeOther)
-}
-
-func (s *Server) requireAuth(c *fiber.Ctx) error {
-	ok, err := s.isAuthenticated(c)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		// HTMX: generic auth fragment only — never a feature partial (analyze/queue/…).
-		if c.Get("HX-Request") == "true" {
-			c.Status(fiber.StatusUnauthorized)
-			return s.render(c, "auth_error", map[string]any{
-				"Error": "Session required. Enter PIN.",
-			})
-		}
-		accept := c.Get("Accept")
-		if accept == "" || strings.Contains(accept, "text/html") {
-			c.Status(fiber.StatusUnauthorized)
-			return s.render(c, "pin", map[string]any{
-				"Error": "Session required. Enter PIN.",
-			})
-		}
-		return c.SendStatus(fiber.StatusUnauthorized)
-	}
-	return c.Next()
-}
-
-func (s *Server) isAuthenticated(c *fiber.Ctx) (bool, error) {
-	sess, err := s.store.Get(c)
-	if err != nil {
-		return false, err
-	}
-	v := sess.Get(sessionKeyAuth)
-	b, _ := v.(bool)
-	return b, nil
-}
-
-func (s *Server) render(c *fiber.Ctx, name string, data map[string]any) error {
-	if data == nil {
-		data = map[string]any{}
-	}
-	c.Type("html", "utf-8")
-	var b strings.Builder
-	if err := s.templates.ExecuteTemplate(&b, name, data); err != nil {
-		return err
-	}
-	return c.SendString(b.String())
 }

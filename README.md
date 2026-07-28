@@ -113,7 +113,7 @@ export MINER_TESSERACT=/path/to/tesseract
 export MINER_TESSDATA_PREFIX=/path/to/tessdata   # dir containing jpn.traineddata
 ```
 
-**Tests require local tesseract** (same binary as production). Optional real-engine contract suites (overlap vs `cases.json`):
+**Tests:** default harnesses use `ocr.Static` (no host tesseract). Selected real-CLI tests call `ocr.MustEngine` and **skip** if tesseract is missing. Optional contract suites (overlap vs `cases.json`):
 
 ```bash
 export MINER_OCR_CONTRACT=1

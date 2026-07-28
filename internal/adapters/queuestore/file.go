@@ -3,7 +3,6 @@ package queuestore
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,7 +30,7 @@ type fileDoc struct {
 // Create implements ports.QueueStore.
 func (f *File) Create(entry ports.QueueEntry) error {
 	if entry.ID == "" {
-		return errors.New("queuestore: empty entry id")
+		return ErrEmptyID
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -42,7 +41,7 @@ func (f *File) Create(entry ports.QueueEntry) error {
 	}
 	for _, e := range doc.Entries {
 		if e.ID == entry.ID {
-			return fmt.Errorf("queuestore: entry %q already exists", entry.ID)
+			return fmt.Errorf("%w: %q", ErrDuplicateID, entry.ID)
 		}
 	}
 	doc.Entries = append(doc.Entries, copyEntry(entry))
@@ -73,16 +72,16 @@ func (f *File) ClearAll() error {
 }
 
 // AppendUnknown implements ports.QueueStore — atomic read-modify-write under one lock.
-func (f *File) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, error) {
+func (f *File) AppendUnknown(id, surface string) (ports.AppendResult, error) {
 	if id == "" {
-		return ports.QueueEntry{}, false, false, errors.New("queuestore: empty entry id")
+		return ports.AppendResult{}, ErrEmptyID
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	doc, err := f.load()
 	if err != nil {
-		return ports.QueueEntry{}, false, false, err
+		return ports.AppendResult{}, err
 	}
 	for i, e := range doc.Entries {
 		if e.ID != id {
@@ -90,16 +89,15 @@ func (f *File) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, 
 		}
 		next, added := appendSurfaceIfAbsent(e, surface)
 		if !added {
-			return next, false, true, nil
+			return ports.AppendResult{Entry: next, Added: false, Found: true}, nil
 		}
 		doc.Entries[i] = next
 		if err := f.save(doc); err != nil {
-			return ports.QueueEntry{}, false, true, err
+			return ports.AppendResult{Found: true}, err
 		}
-		// next is already a deep copy from appendSurfaceIfAbsent.
-		return next, true, true, nil
+		return ports.AppendResult{Entry: next, Added: true, Found: true}, nil
 	}
-	return ports.QueueEntry{}, false, false, nil
+	return ports.AppendResult{Found: false}, nil
 }
 
 func (f *File) load() (fileDoc, error) {

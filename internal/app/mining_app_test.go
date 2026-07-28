@@ -1,11 +1,13 @@
 package app_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/rikiisworking/miner/internal/adapters/ocr"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
@@ -14,6 +16,10 @@ import (
 	"github.com/rikiisworking/miner/internal/ocrtest"
 	"github.com/rikiisworking/miner/internal/ports"
 )
+
+// defaultTestOCR is used when a test never exercises Recognize (PIN, analyze, queue).
+// Prefer ocr.Static over MustEngine so hosts without tesseract stay green.
+var defaultTestOCR = ocr.Static{Text: "私は本を読む。"}
 
 // fakeAnalyzer is a test double for ports.JapaneseAnalyzer.
 // Controllable tokens stay package-local; queue/pin use shared adapters.
@@ -51,9 +57,11 @@ func newAppWithQueue(t *testing.T, analyzer ports.JapaneseAnalyzer, queue ports.
 	if analyzer == nil {
 		analyzer = fakeAnalyzer{}
 	}
-	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue, ocr.MustEngine(t))
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue, defaultTestOCR)
 }
 
+// newAppWithOCR builds MiningApp with an explicit OcrEngine.
+// Pass nil only from tests that need the real Tesseract CLI (MustEngine).
 func newAppWithOCR(t *testing.T, o ports.OcrEngine) *app.MiningApp {
 	t.Helper()
 	if o == nil {
@@ -752,9 +760,10 @@ func TestClearAll_EmptiesStore_AndNoOpWhenEmpty(t *testing.T) {
 }
 
 func TestIngestPage_OCRTextToCandidates(t *testing.T) {
-	m := newAppWithOCR(t, nil)
+	// Real CLI path: multi-sentence fixture must produce known candidates.
+	m := newAppWithOCR(t, nil) // nil → MustEngine
 	img := fixtureBytes(t, "02_multi_sentence")
-	got, err := m.IngestPage(img)
+	got, err := m.IngestPage(context.Background(), img)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -775,29 +784,46 @@ func TestIngestPage_OCRTextToCandidates(t *testing.T) {
 	}
 }
 
+func TestIngestPage_OCRTextToCandidates_StaticEngine(t *testing.T) {
+	// Product rules (split → candidates, no queue write) without host tesseract.
+	m := newAppWithOCR(t, ocr.Static{Text: "病院に行った。\n私は本を読む。"})
+	got, err := m.IngestPage(context.Background(), []byte("fake-image"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Candidates) < 2 {
+		t.Fatalf("Candidates=%#v", got.Candidates)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("ingest must not write queue; got %d", len(list))
+	}
+}
+
 func TestIngestPage_OversizeRejected(t *testing.T) {
 	// OCR must not run — any engine is fine; size gate is MiningApp.
-	m := newAppWithOCR(t, nil)
+	m := newAppWithOCR(t, defaultTestOCR)
 	img := make([]byte, app.MaxUploadBytes+1)
-	_, err := m.IngestPage(img)
+	_, err := m.IngestPage(context.Background(), img)
 	if !errors.Is(err, app.ErrPayloadTooLarge) {
 		t.Fatalf("got %v want ErrPayloadTooLarge", err)
 	}
 }
 
 func TestIngestPage_EmptyImage(t *testing.T) {
-	m := newAppWithOCR(t, nil)
-	_, err := m.IngestPage(nil)
-	if !errors.Is(err, app.ErrEmptyPage) {
-		t.Fatalf("got %v want ErrEmptyPage", err)
+	m := newAppWithOCR(t, defaultTestOCR)
+	_, err := m.IngestPage(context.Background(), nil)
+	if !errors.Is(err, app.ErrEmptyImage) {
+		t.Fatalf("got %v want ErrEmptyImage", err)
 	}
 }
 
 func TestIngestPage_OCRFailure(t *testing.T) {
-	m := newAppWithOCR(t, nil)
-	// Non-image payload forces tesseract/leptonica error.
-	img := fixtureBytes(t, "19_not_an_image")
-	_, err := m.IngestPage(img)
+	m := newAppWithOCR(t, ocr.Static{Err: errors.New("engine down")})
+	_, err := m.IngestPage(context.Background(), []byte("img"))
 	if !errors.Is(err, app.ErrOcrFailed) {
 		t.Fatalf("got %v want ErrOcrFailed", err)
 	}
@@ -811,10 +837,8 @@ func TestIngestPage_OCRFailure(t *testing.T) {
 }
 
 func TestIngestPage_EmptyOCRText(t *testing.T) {
-	m := newAppWithOCR(t, nil)
-	// Blank page → no glyphs → empty OCR text → ErrEmptyPage.
-	img := fixtureBytes(t, "06_blank")
-	_, err := m.IngestPage(img)
+	m := newAppWithOCR(t, ocr.Static{Text: "   "})
+	_, err := m.IngestPage(context.Background(), []byte("img"))
 	if !errors.Is(err, app.ErrEmptyPage) {
 		t.Fatalf("got %v want ErrEmptyPage", err)
 	}
@@ -832,12 +856,12 @@ func TestIngestPage_SingleFlight(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := m.IngestPage([]byte("img-a"))
+		_, err := m.IngestPage(context.Background(), []byte("img-a"))
 		errCh <- err
 	}()
 	<-started
 
-	_, err := m.IngestPage([]byte("img-b"))
+	_, err := m.IngestPage(context.Background(), []byte("img-b"))
 	if !errors.Is(err, app.ErrIngestBusy) {
 		t.Fatalf("second ingest: %v want ErrIngestBusy", err)
 	}
@@ -854,8 +878,8 @@ func TestIngestPage_DoesNotClearQueue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, q, ocr.MustEngine(t))
-	if _, err := m.IngestPage(fixtureBytes(t, "01_single_sentence")); err != nil {
+	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, q, ocr.Static{Text: "病院に行った。"})
+	if _, err := m.IngestPage(context.Background(), []byte("img")); err != nil {
 		t.Fatal(err)
 	}
 	list, err := m.ListQueue()
@@ -875,27 +899,82 @@ type slowOCR struct {
 	once    sync.Once
 }
 
-func (s *slowOCR) Recognize(image []byte) (string, error) {
+func (s *slowOCR) Recognize(ctx context.Context, image []byte) (string, error) {
 	s.once.Do(func() { close(s.started) })
-	<-s.release
-	return s.text, nil
+	select {
+	case <-s.release:
+		return s.text, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func TestIngestPage_ExactMaxUploadBytesAllowed(t *testing.T) {
 	// Size gate only: exact max must not be ErrPayloadTooLarge.
-	// Random bytes are not a valid image; OCR may fail after the size check.
-	m := newAppWithOCR(t, nil)
+	// Static succeeds after size check so we prove the gate alone allows max.
+	m := newAppWithOCR(t, ocr.Static{Text: "私は本を読む。"})
 	img := make([]byte, app.MaxUploadBytes)
-	_, err := m.IngestPage(img)
+	_, err := m.IngestPage(context.Background(), img)
 	if errors.Is(err, app.ErrPayloadTooLarge) {
 		t.Fatal("exact MaxUploadBytes must not be rejected as too large")
+	}
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+func TestIngestPage_NormalizeSpacedCJK(t *testing.T) {
+	// Product normalize lives in MiningApp, not the engine adapter.
+	m := newAppWithOCR(t, ocr.Static{Text: "彼 は 本 を 読 む 。\n\n雨 が 降 る 。"})
+	got, err := m.IngestPage(context.Background(), []byte("img"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.Text, "彼 は") {
+		t.Fatalf("expected inter-CJK strip: %q", got.Text)
+	}
+	if len(got.Candidates) < 2 {
+		t.Fatalf("Candidates=%#v", got.Candidates)
+	}
+}
+
+func TestIngestPage_CancelReleasesBusy(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine := &slowOCR{started: started, release: release, text: "私は本を読む。"}
+	m := newAppWithOCR(t, engine)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := m.IngestPage(ctx, []byte("img-a"))
+		errCh <- err
+	}()
+	<-started
+	cancel()
+	err := <-errCh
+	if !errors.Is(err, app.ErrIngestCanceled) {
+		t.Fatalf("got %v want ErrIngestCanceled", err)
+	}
+	close(release)
+
+	// Busy slot must be free after cancel.
+	got, err := m.IngestPage(context.Background(), []byte("img-b"))
+	if errors.Is(err, app.ErrIngestBusy) {
+		t.Fatal("busy slot leaked after cancel")
+	}
+	if err != nil {
+		t.Fatalf("second ingest: %v", err)
+	}
+	if len(got.Candidates) < 1 {
+		t.Fatalf("Candidates=%#v", got.Candidates)
 	}
 }
 
 func TestNewMiningApp_RequiresPorts(t *testing.T) {
 	q := queuestore.NewMem()
 	a := fakeAnalyzer{}
-	o := ocr.MustEngine(t)
+	o := defaultTestOCR
 	p := pinauth.Static{Secret: "p"}
 
 	mustPanic := func(name string, fn func()) {
@@ -911,4 +990,148 @@ func TestNewMiningApp_RequiresPorts(t *testing.T) {
 	mustPanic("nil analyzer", func() { app.NewMiningApp(p, nil, q, o) })
 	mustPanic("nil queue", func() { app.NewMiningApp(p, a, nil, o) })
 	mustPanic("nil ocr", func() { app.NewMiningApp(p, a, q, nil) })
+}
+
+// TestAddUnknown_PassID_ClonesMapKey guards Fiber FormValue lifetime:
+// pass_id may be a string view into a reused request buffer. openPasses must
+// clone the key so later taps still bind to the same entry after the buffer mutates.
+func TestAddUnknown_PassID_ClonesMapKey(t *testing.T) {
+	m := newApp(t, nil)
+	analysis, err := m.AnalyzeSentence("私は本を読む。")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate fasthttp/Fiber UnsafeString: map key would share this buffer.
+	buf := make([]byte, len(analysis.PassID))
+	copy(buf, analysis.PassID)
+	passView := unsafe.String(unsafe.SliceData(buf), len(buf))
+
+	first, err := m.AddUnknown("私は本を読む。", "本", "", passView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created {
+		t.Fatalf("first tap should create: %+v", first)
+	}
+
+	// Handler returned; request buffer is free to be overwritten.
+	for i := range buf {
+		buf[i] = 'x'
+	}
+
+	// New request carries the logical pass_id as a fresh safe string.
+	second, err := m.AddUnknown("私は本を読む。", "読む", "", analysis.PassID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.EntryID != first.EntryID {
+		t.Fatalf("pass→entry bind lost after buffer reuse: first=%q second=%q", first.EntryID, second.EntryID)
+	}
+	if second.Created {
+		t.Fatal("second tap must not create another entry for the same pass")
+	}
+	if len(second.Unknowns) != 2 {
+		t.Fatalf("unknowns=%v want two surfaces on one entry", second.Unknowns)
+	}
+}
+
+func TestClearAll_DropsOpenPassBindings(t *testing.T) {
+	m := newApp(t, nil)
+	analysis, err := m.AnalyzeSentence("私は本を読む。")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.AddUnknown("私は本を読む。", "本", "", analysis.PassID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ClearAll(); err != nil {
+		t.Fatal(err)
+	}
+	// Same pass_id after clear must create a new entry (binding wiped).
+	second, err := m.AddUnknown("私は本を読む。", "本", "", analysis.PassID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.EntryID == first.EntryID {
+		t.Fatalf("pass re-bound deleted entry: %q", second.EntryID)
+	}
+	if !second.Created {
+		t.Fatalf("expected new create after clear: %+v", second)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != second.EntryID {
+		t.Fatalf("list=%+v", list)
+	}
+}
+
+type errQueue struct {
+	listErr   error
+	createErr error
+	appendErr error
+	clearErr  error
+}
+
+func (e errQueue) Create(entry ports.QueueEntry) error {
+	if e.createErr != nil {
+		return e.createErr
+	}
+	return nil
+}
+func (e errQueue) List() ([]ports.QueueEntry, error) {
+	if e.listErr != nil {
+		return nil, e.listErr
+	}
+	return nil, nil
+}
+func (e errQueue) AppendUnknown(id, surface string) (ports.AppendResult, error) {
+	if e.appendErr != nil {
+		return ports.AppendResult{}, e.appendErr
+	}
+	return ports.AppendResult{Found: false}, nil
+}
+func (e errQueue) ClearAll() error {
+	if e.clearErr != nil {
+		return e.clearErr
+	}
+	return nil
+}
+
+func TestListQueue_StoreError(t *testing.T) {
+	want := errors.New("list boom")
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{listErr: want}, defaultTestOCR)
+	_, err := m.ListQueue()
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAddUnknown_CreateError(t *testing.T) {
+	want := errors.New("create boom")
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{createErr: want}, defaultTestOCR)
+	_, err := m.AddUnknown("私は本を読む。", "本", "", "")
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExportMarkdown_StoreError(t *testing.T) {
+	want := errors.New("list boom")
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{listErr: want}, defaultTestOCR)
+	_, err := m.ExportMarkdown()
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestClearAll_StoreError(t *testing.T) {
+	want := errors.New("clear boom")
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{clearErr: want}, defaultTestOCR)
+	if err := m.ClearAll(); !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
 }

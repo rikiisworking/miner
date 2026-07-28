@@ -12,10 +12,11 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 |------|---------|
 | **MiningApp** | Application facade for all product use-cases. **Primary test seam** (L1). |
 | **PinAuth** | Port: verify shared PIN. |
-| **OcrEngine** | Port: image bytes → plain text (local only). Ticket 06. Adapter: `adapters/ocr.Tesseract` (CLI; prod + tests). |
+| **OcrEngine** | Port: `Recognize(ctx, image) → text` (local only). Ticket 06. Prod: `adapters/ocr.Tesseract` (CLI; engine stdout, no product normalize). Test: `adapters/ocr.Static`. Product page-text hygiene: **NormalizePageText** on MiningApp before SplitSentences. |
+| **NormalizePageText** | Pure helper: inter-CJK space strip + blank-line collapse. Used by IngestPage and ProposeSentences. |
 | **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. |
-| **QueueStore** | Port: durable queue entries. File JSON adapter under `MINER_DATA_DIR`. Ticket 03. Surface: **Create**, **List**, **AppendUnknown**, **ClearAll** (no generic Get/Update). |
-| **IngestPage** | MiningApp use-case: image bytes → OCR text → sentence candidates. Enforces **MaxUploadBytes** (10 MiB), single-flight (**ErrIngestBusy**), discards image after return (caller). Never writes queue. |
+| **QueueStore** | Port: durable queue entries. File JSON + Mem adapters. Surface: **Create**, **List**, **AppendUnknown** → `AppendResult`, **ClearAll**. Sentinels: `queuestore.ErrEmptyID`, `ErrDuplicateID`. |
+| **IngestPage** | MiningApp: image → OCR (ctx, **MaxIngestDuration**) → **NormalizePageText** → candidates. Empty image → **ErrEmptyImage**; empty OCR text → **ErrEmptyPage**. Single-flight **ErrIngestBusy**; cancel **ErrIngestCanceled**. Never writes queue. |
 | **Queue entry** | Stable id + sentence text + ordered unique unknowns + first-unknown-at. New mining pass ⇒ new id (no merge-by-text). |
 | **Analyze pass / PassID** | Ephemeral id returned by each `AnalyzeSentence`. First `AddUnknown` with that pass creates the entry; later unknowns (or concurrent first-taps) with the same pass append. Not durable; not the queue entry id. See **Pass protocol**. |
 | **Unknown** | Surface form tapped from content-word list; stored as shown (not lemma). |
@@ -58,11 +59,12 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 
 | Layer | Where | What |
 |-------|--------|------|
-| L1 | `internal/app` (+ pure helpers) | Product rules via MiningApp; `queuestore.Mem` / file store + `pinauth.Static` + real `ocr.Tesseract` (host install) |
-| L2 | `internal/httpapi` | Fiber `app.Test`; session/HTML; pass_id transport |
-| L3 | `e2e` | Headless browser clicks; local assets only |
+| L1 | `internal/app` (+ pure helpers) | Product rules via MiningApp; `queuestore.Mem` / file store + `pinauth.Static` + default `ocr.Static` |
+| L2 | `internal/httpapi` | Fiber `app.Test`; session/HTML; pass_id transport; default `ocr.Static` |
+| L3 | `e2e` | Headless browser clicks; local assets; default `ocr.Static` |
+| OCR-real | selected tests only | `ocr.MustEngine` (host tesseract + jpn/jpn_vert); **skips** if missing |
 
-Command: `make test` (full suite). Shared test doubles: `queuestore.NewMem()`, `pinauth.Static` (not package-local copies).
+Command: `make test` (full suite). Shared test doubles: `queuestore.NewMem()`, `pinauth.Static`, `ocr.Static` (not package-local copies). Real Tesseract only for tests that intentionally prove the CLI.
 
 ## Architectural rule (C1)
 

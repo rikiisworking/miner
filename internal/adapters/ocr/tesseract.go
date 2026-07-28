@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/rikiisworking/miner/internal/ports"
 )
@@ -31,6 +30,7 @@ var (
 
 // Tesseract is a local OcrEngine that shells out to the tesseract CLI.
 // No CGO. Requires tesseract + Japanese traineddata (jpn / jpn_vert) on the host.
+// Prefer NewTesseract / NewTesseractFromEnv so defaults and resolved bin are set once.
 type Tesseract struct {
 	// Bin is the tesseract executable path. Empty → look up "tesseract" on PATH
 	// (or MINER_TESSERACT via NewTesseractFromEnv).
@@ -43,6 +43,9 @@ type Tesseract struct {
 	PSM int
 	// Timeout bounds one Recognize call. 0 → defaultOCRTimeout.
 	Timeout time.Duration
+
+	// resolvedBin is set by NewTesseract after LookPath (avoids per-Recognize resolve).
+	resolvedBin string
 }
 
 // TesseractConfig is the production constructor input.
@@ -73,9 +76,11 @@ func NewTesseract(cfg TesseractConfig) (*Tesseract, error) {
 	if t.Timeout <= 0 {
 		t.Timeout = defaultOCRTimeout
 	}
-	if _, err := t.resolveBin(); err != nil {
+	bin, err := t.resolveBin()
+	if err != nil {
 		return nil, err
 	}
+	t.resolvedBin = bin
 	return t, nil
 }
 
@@ -112,16 +117,27 @@ func (t *Tesseract) resolveBin() (string, error) {
 }
 
 // Recognize implements ports.OcrEngine.
-func (t *Tesseract) Recognize(image []byte) (string, error) {
+// Returns engine stdout with trailing whitespace trimmed only — product
+// page-text normalize (inter-CJK strip, blank lines) is MiningApp's job.
+func (t *Tesseract) Recognize(ctx context.Context, image []byte) (string, error) {
 	if len(image) == 0 {
 		return "", ErrEmptyImage
 	}
-
-	bin, err := t.resolveBin()
-	if err != nil {
-		return "", err
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
+	bin := t.resolvedBin
+	if bin == "" {
+		var err error
+		bin, err = t.resolveBin()
+		if err != nil {
+			return "", err
+		}
+		t.resolvedBin = bin
+	}
+
+	// Defaults applied in NewTesseract; re-apply only if zero-value struct used.
 	lang := t.Lang
 	if lang == "" {
 		lang = DefaultTesseractLang
@@ -164,15 +180,19 @@ func (t *Tesseract) Recognize(image []byte) (string, error) {
 		env = append(env, "TESSDATA_PREFIX="+t.TessdataPrefix)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Nest adapter timeout under caller ctx (MiningApp MaxIngestDuration / HTTP cancel).
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Env = env
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
+		if err := runCtx.Err(); err != nil {
+			return "", err
+		}
 		msg := strings.TrimSpace(errBuf.String())
 		if msg == "" {
 			msg = err.Error()
@@ -180,7 +200,7 @@ func (t *Tesseract) Recognize(image []byte) (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrRecognizeFailed, msg)
 	}
 
-	return normalizeOCRText(outBuf.String()), nil
+	return strings.TrimSpace(outBuf.String()), nil
 }
 
 // imageExt picks a temp-file suffix from magic bytes so leptonica decodes correctly.
@@ -202,65 +222,6 @@ func imageExt(image []byte) string {
 	}
 	// Unknown: still try; leptonica may sniff. Prefer .img over empty.
 	return ".img"
-}
-
-// normalizeOCRText cleans tesseract output for novel mining:
-// strip inter-CJK spaces (common with jpn_vert), collapse blank lines, trim.
-func normalizeOCRText(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	s = stripInterCJKSpaces(s)
-
-	lines := strings.Split(s, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
-}
-
-// stripInterCJKSpaces drops ASCII/ideographic spaces that sit between Japanese
-// characters (tesseract often emits "私 は 本" or per-glyph spaces on vertical text).
-func stripInterCJKSpaces(s string) string {
-	runes := []rune(s)
-	if len(runes) == 0 {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i, r := range runes {
-		if isSpaceRune(r) && i > 0 && i+1 < len(runes) {
-			prev, next := runes[i-1], runes[i+1]
-			if isJPGlyph(prev) && isJPGlyph(next) {
-				continue
-			}
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-func isSpaceRune(r rune) bool {
-	return r == ' ' || r == '\t' || r == '\u3000'
-}
-
-// isJPGlyph: hiragana, katakana, CJK, common punctuation used in novel prose.
-func isJPGlyph(r rune) bool {
-	if unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Han) {
-		return true
-	}
-	switch r {
-	case '。', '、', '！', '？', '．', '「', '」', '『', '』', '（', '）',
-		'・', 'ー', '—', '…', '々', '〆', '〇', '〜', '～',
-		'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-		'０', '１', '２', '３', '４', '５', '６', '７', '８', '９':
-		return true
-	}
-	return false
 }
 
 // Ensure Tesseract satisfies the port at compile time.

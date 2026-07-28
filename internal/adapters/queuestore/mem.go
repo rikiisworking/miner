@@ -1,7 +1,7 @@
 package queuestore
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/rikiisworking/miner/internal/ports"
@@ -25,10 +25,10 @@ func (m *Mem) Create(entry ports.QueueEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if entry.ID == "" {
-		return errors.New("queuestore: empty entry id")
+		return ErrEmptyID
 	}
 	if _, ok := m.byID[entry.ID]; ok {
-		return errors.New("queuestore: duplicate id")
+		return fmt.Errorf("%w: %q", ErrDuplicateID, entry.ID)
 	}
 	m.byID[entry.ID] = copyEntry(entry)
 	m.order = append(m.order, entry.ID)
@@ -47,17 +47,19 @@ func (m *Mem) List() ([]ports.QueueEntry, error) {
 }
 
 // AppendUnknown implements ports.QueueStore.
-func (m *Mem) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, error) {
+func (m *Mem) AppendUnknown(id, surface string) (ports.AppendResult, error) {
+	if id == "" {
+		return ports.AppendResult{}, ErrEmptyID
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.byID[id]
 	if !ok {
-		return ports.QueueEntry{}, false, false, nil
+		return ports.AppendResult{Found: false}, nil
 	}
 	next, added := appendSurfaceIfAbsent(e, surface)
 	m.byID[id] = next
-	// next is already a deep copy from appendSurfaceIfAbsent.
-	return next, added, true, nil
+	return ports.AppendResult{Entry: next, Added: added, Found: true}, nil
 }
 
 // ClearAll implements ports.QueueStore.

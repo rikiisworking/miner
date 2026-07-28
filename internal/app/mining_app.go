@@ -72,7 +72,7 @@ type MiningApp struct {
 }
 
 // NewMiningApp constructs the facade with required ports.
-// ocr may be a stub until a real local engine is wired; IngestPage requires a non-nil engine.
+// ocr must be non-nil (production: adapters/ocr.Tesseract).
 func NewMiningApp(pinAuth ports.PinAuth, analyzer ports.JapaneseAnalyzer, queue ports.QueueStore, ocr ports.OcrEngine) *MiningApp {
 	if pinAuth == nil {
 		panic("pinAuth is required")

@@ -21,7 +21,7 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 | 03 | Mark unknowns → durable queue | done |
 | 04 | Export Markdown (+ Clear all) | done (text-only path complete) |
 | 05 | Full-page text → pick sentence | done |
-| 06 | Photo ingest + local OCR (file upload) | done (stub OCR; real engine later) |
+| 06 | Photo ingest + local OCR (file upload) | done (Tesseract local adapter) |
 | 07+ | Camera capture / UX hardening | next |
 
 ### Configure
@@ -32,6 +32,9 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 | `MINER_ADDR` | no | `:8080` | Listen address (`0.0.0.0:8080` style via `:8080`) |
 | `MINER_WEB_ROOT` | no | *(embedded)* | Optional disk override of `templates/` + `static/` for live HTML edit |
 | `MINER_DATA_DIR` | no | `data` | Directory for durable queue file (`queue.json`; gitignored) |
+| `MINER_TESSERACT` | no | `tesseract` on `PATH` | Path to local tesseract binary |
+| `MINER_TESSDATA_PREFIX` | no | (tesseract default) | Tessdata dir (must include `jpn` / `jpn_vert`) |
+| `MINER_OCR_LANG` | no | `jpn+jpn_vert` | Tesseract `-l` language string |
 
 ### Run
 
@@ -99,7 +102,26 @@ After PIN unlock: **Page photo** file input → `POST /ingest` (multipart field 
 - Image bytes not written under `MINER_DATA_DIR`; discarded when the request finishes  
 - Success reuses ticket 05 pick → analyze → mark → export pipeline  
 
-Production currently wires `internal/adapters/ocr.Stub` (deterministic test double). L1/L2/L3 use fakes / `ByBytes` maps; real local engine is an adapter swap (no product rewrite). Synthetic page fixtures: `testdata/ocr/`.
+**Local OCR engine:** production wires `internal/adapters/ocr.Tesseract` (CLI, no CGO). Requires host install:
+
+```bash
+# Debian/Ubuntu
+sudo apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert
+
+# Or point at any install:
+export MINER_TESSERACT=/path/to/tesseract
+export MINER_TESSDATA_PREFIX=/path/to/tessdata   # dir containing jpn.traineddata
+```
+
+**Tests require local tesseract** (same binary as production). Optional stricter overlap suite:
+
+```bash
+export MINER_OCR_CONTRACT=1
+# ensure tesseract + jpn on PATH / MINER_*
+go test ./internal/adapters/ocr/ -count=1 -run Contract
+```
+
+Synthetic page fixtures: `testdata/ocr/`. Primary material = novel prose; vertical pages use `jpn_vert` (best-effort; edit sentence if OCR wrong).
 
 | Method | Path | Body / notes |
 |--------|------|----------------|
@@ -147,7 +169,7 @@ internal/app/                 # MiningApp facade (test seam)
 internal/ports/               # PinAuth, JapaneseAnalyzer, QueueStore, OcrEngine
 internal/adapters/pinauth/    # static shared PIN
 internal/adapters/analyzer/   # stub JapaneseAnalyzer
-internal/adapters/ocr/        # stub OcrEngine (real local engine later)
+internal/adapters/ocr/        # OcrEngine: Tesseract (local CLI)
 internal/adapters/queuestore/ # file + mem QueueStore
 internal/httpapi/             # Fiber + templates
 internal/ocrtest/             # OCR fixture loader (tests)

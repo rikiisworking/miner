@@ -19,20 +19,11 @@ import (
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
 	"github.com/rikiisworking/miner/internal/ocrtest"
-	"github.com/rikiisworking/miner/internal/ports"
 	"github.com/rikiisworking/miner/web"
 )
 
 func startServer(t *testing.T) (baseURL string, shutdown func()) {
 	t.Helper()
-	return startServerWithOCR(t, ocr.Stub{})
-}
-
-func startServerWithOCR(t *testing.T, engine ports.OcrEngine) (baseURL string, shutdown func()) {
-	t.Helper()
-	if engine == nil {
-		engine = ocr.Stub{}
-	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +33,7 @@ func startServerWithOCR(t *testing.T, engine ports.OcrEngine) (baseURL string, s
 		pinauth.Static{Secret: "test-pin-ok"},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
-		engine,
+		ocr.MustEngine(t),
 	)
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
@@ -652,28 +643,20 @@ func TestUI_PageText_ProposePickAnalyze_EditReanalyze(t *testing.T) {
 	}
 }
 
-func fixtureOCRStub(t *testing.T, caseID string) (ocr.Stub, string) {
+func fixtureImagePath(t *testing.T, caseID string) string {
 	t.Helper()
 	manifest, err := ocrtest.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := manifest.Must(caseID)
-	img, err := c.Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := c.ExpectedText
-	if text == "" {
-		t.Fatalf("case %s has empty expected_text", caseID)
-	}
-	return ocr.Stub{ByBytes: map[string]string{string(img): text}}, c.Path()
+	return manifest.Must(caseID).Path()
 }
 
 func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
-	engine, imgPath := fixtureOCRStub(t, "02_multi_sentence")
-	base, shutdown := startServerWithOCR(t, engine)
+	// Real tesseract on multi-sentence fixture image.
+	base, shutdown := startServer(t)
 	t.Cleanup(shutdown)
+	imgPath := fixtureImagePath(t, "02_multi_sentence")
 
 	browser := newBrowser(t)
 	page := unlockToShell(t, browser, base)
@@ -800,15 +783,10 @@ func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
 }
 
 func TestUI_PhotoIngest_OCRFail_ErrorVisible_QueueUnchanged(t *testing.T) {
-	// Fail OCR always; empty durable queue should stay empty.
-	base, shutdown := startServerWithOCR(t, ocr.Stub{FailWith: fmt.Errorf("engine down")})
+	// Non-image fixture forces real engine failure; queue stays empty.
+	base, shutdown := startServer(t)
 	t.Cleanup(shutdown)
-
-	manifest, err := ocrtest.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	imgPath := manifest.Must("01_single_sentence").Path()
+	imgPath := fixtureImagePath(t, "19_not_an_image")
 
 	browser := newBrowser(t)
 	page := unlockToShell(t, browser, base)

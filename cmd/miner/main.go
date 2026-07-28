@@ -43,12 +43,16 @@ func main() {
 		log.Fatalf("web assets: %v", err)
 	}
 
+	ocrEngine, err := ocr.NewTesseractFromEnv()
+	if err != nil {
+		log.Fatalf("OCR engine: %v\nInstall local tesseract with Japanese data, e.g.:\n  sudo apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert\nOr set MINER_TESSERACT and MINER_TESSDATA_PREFIX to a user-local install.", err)
+	}
+
 	mining := app.NewMiningApp(
 		pinauth.Static{Secret: pin},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
-		// Deterministic stub until a real local OCR adapter is chosen (port stays OcrEngine).
-		ocr.Stub{},
+		ocrEngine,
 	)
 	srv, err := httpapi.New(httpapi.Config{
 		MiningApp: mining,

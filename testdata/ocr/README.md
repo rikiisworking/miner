@@ -4,10 +4,10 @@ Synthetic **page-image** cases for local OCR ingest. Primary material = novel pr
 
 | Layer | How these are used |
 |-------|--------------------|
-| **L1** MiningApp | Prefer **fake** `OcrEngine` with fixed strings. No real OCR in product-rule tests. |
-| **L2** HTTP | Multipart upload of small files (`15_tiny`, `01_single_sentence`, oversize buffer in-test). |
-| **L3** UI | File-input journey with one happy image + one error fixture. |
-| **Adapter contract** (optional) | Real engine vs `cases.json` `expected_text` / `min_overlap`. |
+| **L1** MiningApp | Real `ocr.Tesseract` + fixture images (size/busy still pure rules). |
+| **L2** HTTP | Multipart upload of fixture images (`02_multi_sentence`, `19_not_an_image`, oversize buffer). |
+| **L3** UI | File-input journey with happy image + non-image error fixture. |
+| **Adapter contract** (optional) | `MINER_OCR_CONTRACT=1` vs `cases.json` `expected_text` / `min_overlap`. |
 
 ## Layout
 

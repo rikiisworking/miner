@@ -59,8 +59,10 @@
 
 ### Spike note — OCR engine (2026-07)
 
-- Product rules + HTTP + UI complete behind **OcrEngine** port.
-- Automated path uses **`ocr.Stub`** (`Text` / `ByBytes` / `FailWith`); L3 maps fixture bytes → `expected_text` from `testdata/ocr/cases.json`.
-- No real local engine wired in process entry yet (`cmd/miner` still uses empty Stub → Recognize fails until configured).
-- Host had no `tesseract` binary at spike time; pick later (tesseract+jpn, manga-ocr, Paddle, …) as **adapter only** — do not re-implement IngestPage rules in the adapter.
-- Quality vs real vertical novel pages deferred to ticket 08 manual verification once an engine lands.
+- **Chosen engine:** [Tesseract](https://github.com/tesseract-ocr/tesseract) 5.x via CLI adapter `internal/adapters/ocr.Tesseract` (no CGO).
+- **Langs:** `jpn+jpn_vert` (horizontal + vertical Japanese traineddata).
+- **Normalize:** strip inter-CJK spaces (vertical often emits per-glyph spaces); collapse blank lines.
+- **Fixtures:** horizontal happy path (e.g. `01_single_sentence`, `02_multi_sentence`) reads cleanly. Vertical bunkobon fixtures are best-effort — glyph order/spacing imperfect; product safety net = edit sentence (ticket 05/02 path).
+- **Wire-up:** `cmd/miner` → `NewTesseractFromEnv()`; fails fast if binary missing. Env: `MINER_TESSERACT`, `MINER_TESSDATA_PREFIX`, `MINER_OCR_LANG`.
+- **Tests:** L1–L3 use real `ocr.Tesseract` via `ocr.MustEngine` + `testdata/ocr` fixtures (no stub). Optional `MINER_OCR_CONTRACT=1` overlap suite.
+- Further vertical quality tuning → ticket 08.

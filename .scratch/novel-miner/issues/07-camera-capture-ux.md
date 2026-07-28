@@ -6,36 +6,36 @@
 
 **Does not block:** 08 — Novel UX hardening (08 may ship on file-upload path alone)
 
-**Status:** blocked
+**Status:** in progress
 
 **Parent:** `.scratch/novel-miner/spec.md`
 
 ### Feature
 
-- [ ] Authenticated UI supports camera capture on typical mobile browsers (in addition to file upload)
-- [ ] Captured image uses the same IngestPage / OCR path as file upload
-- [ ] Clear messaging when camera permission denied or capture unavailable; file upload still offered
-- [ ] Capture controls usable one-handed on a phone (large targets, minimal chrome)
-- [ ] No new MiningApp business rules
+- [x] Authenticated UI supports camera capture on typical mobile browsers (in addition to file upload)
+- [x] Captured image uses the same IngestPage / OCR path as file upload
+- [x] Clear messaging when camera permission denied or capture unavailable; file upload still offered
+- [x] Capture controls usable one-handed on a phone (large targets, minimal chrome)
+- [x] No new MiningApp business rules
 
 ### Testing (required this ticket)
 
 **L1 unit / facade**
 
-- [ ] No new business rules required; existing L1 suite still green (no regressions)
-- [ ] If any thin “capture result → IngestPage” helper exists, unit-test that it forwards bytes only
+- [x] No new business rules required; existing L1 suite still green (no regressions)
+- [x] If any thin “capture result → IngestPage” helper exists, unit-test that it forwards bytes only *(none — client posts same multipart form)*
 
 **L2 HTTP smoke**
 
-- [ ] No new routes required ideally; if capture posts same ingest endpoint, existing 06 smoke still green
-- [ ] Any new endpoint covered with one smoke
+- [x] No new routes required ideally; if capture posts same ingest endpoint, existing 06 smoke still green
+- [x] Any new endpoint covered with one smoke *(no new endpoints)*
 
 **L3 UI click smoke**
 
-- [ ] Authenticated shell shows camera capture control **and** file upload control
-- [ ] File upload path still completes (regression click: fixture image → candidates)
-- [ ] Camera control is present and clickable in headless env **or** gracefully shows fallback when `getUserMedia` unavailable (assert fallback/upload still usable—do not fail CI for missing hardware)
-- [ ] Do **not** require real webcam in CI
+- [x] Authenticated shell shows camera capture control **and** file upload control
+- [x] File upload path still completes (regression click: fixture image → candidates)
+- [x] Camera control is present and clickable in headless env **or** gracefully shows fallback when `getUserMedia` unavailable (assert fallback/upload still usable—do not fail CI for missing hardware)
+- [x] Do **not** require real webcam in CI
 
 **Manual (required for camera hardware)**
 
@@ -45,4 +45,4 @@
 **Gate**
 
 - [ ] New/updated tests committed with feature
-- [ ] Full suite (01–07) run green before ticket done
+- [x] Full suite (01–07) run green before ticket done

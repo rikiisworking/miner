@@ -662,6 +662,69 @@ func fixtureImagePath(t *testing.T, caseID string) string {
 	return manifest.Must(caseID).Path()
 }
 
+func TestUI_CameraCapture_ControlPresent_FallbackOrClickable(t *testing.T) {
+	// Headless CI has no webcam. Assert camera control + upload still usable.
+	// Either getUserMedia works (rare in CI) or fallback/error path appears.
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="camera-section"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("camera-section missing: %v\nhtml=%s", err, html)
+	}
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-upload-section"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("photo-upload-section missing next to camera: %v\nhtml=%s", err, html)
+	}
+
+	start, err := page.Timeout(5 * time.Second).Element(`[data-testid="camera-start"]`)
+	if err != nil {
+		t.Fatalf("camera-start missing: %v", err)
+	}
+	// Control must be clickable (not permanently removed).
+	if err := start.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatalf("camera-start not clickable: %v", err)
+	}
+
+	// After click: live preview, error, or fallback (no real camera in CI).
+	// getUserMedia may hang until the page's 4s open-timeout fires.
+	deadline := time.Now().Add(8 * time.Second)
+	var settled bool
+	for time.Now().Before(deadline) {
+		res, err := page.Eval(`() => {
+			const visible = (sel) => {
+				const el = document.querySelector(sel);
+				return !!(el && !el.hidden);
+			};
+			const err = document.querySelector('[data-testid="camera-error"]');
+			const errText = !!(err && !err.hidden && (err.textContent || '').trim());
+			return visible('[data-testid="camera-live"]')
+				|| errText
+				|| visible('[data-testid="camera-fallback"]');
+		}`)
+		if err == nil && res.Value.Bool() {
+			settled = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !settled {
+		html, _ := page.HTML()
+		t.Fatalf("after camera-start: want live preview, error, or fallback\nhtml=%s", html)
+	}
+
+	// File upload still present after camera attempt.
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-input"]`); err != nil {
+		t.Fatalf("photo-input missing after camera attempt: %v", err)
+	}
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-submit"]`); err != nil {
+		t.Fatalf("photo-submit missing after camera attempt: %v", err)
+	}
+}
+
 func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
 	// Static OCR returns multi-sentence text for any upload (no host tesseract).
 	base, shutdown := startServer(t)
@@ -674,6 +737,11 @@ func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
 	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-upload-section"]`); err != nil {
 		html, _ := page.HTML()
 		t.Fatalf("photo-upload-section missing: %v\nhtml=%s", err, html)
+	}
+	// Ticket 07: camera control coexists with file upload.
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="camera-section"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("camera-section missing beside upload: %v\nhtml=%s", err, html)
 	}
 
 	input, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-input"]`)

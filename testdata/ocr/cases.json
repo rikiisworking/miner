@@ -1,0 +1,815 @@
+{
+  "version": 1,
+  "description": "Synthetic OCR fixtures for novel-miner ticket 06+. L1 product rules use fake OcrEngine; these images support adapter contract tests, L2 multipart smoke, and L3 upload journeys. Includes tate-gaki, phone-tilt, brightness, and intra-shot mixed style suites.",
+  "font_note": "Generated with IPAex/Noto CJK; font not required at test runtime.",
+  "max_upload_bytes": 10485760,
+  "cases": [
+    {
+      "id": "01_single_sentence",
+      "file": "images/01_single_sentence.png",
+      "expected_text": "私は本を読む。",
+      "want_success": true,
+      "min_overlap": 0.9,
+      "tags": [
+        "happy",
+        "horizontal",
+        "single",
+        "stub-aligned"
+      ],
+      "notes": "Clean single sentence; matches analyzer stub fixture."
+    },
+    {
+      "id": "02_multi_sentence",
+      "file": "images/02_multi_sentence.png",
+      "expected_text": "病院に行った。\n今日は雨だ。\n私は本を読む。",
+      "want_success": true,
+      "min_overlap": 0.85,
+      "tags": [
+        "happy",
+        "horizontal",
+        "multi-sentence"
+      ],
+      "notes": "Three short novel-like sentences; feeds splitSentences after OCR."
+    },
+    {
+      "id": "03_paragraph",
+      "file": "images/03_paragraph.png",
+      "expected_text": "彼は静かな部屋で古い小説を開いた。\n窓の外では風が木の葉を揺らしている。\nお茶を一口飲んでから、次のページへ進んだ。",
+      "want_success": true,
+      "min_overlap": 0.8,
+      "tags": [
+        "happy",
+        "horizontal",
+        "paragraph"
+      ],
+      "notes": "Longer prose lines; typical phone capture density."
+    },
+    {
+      "id": "04_vertical_columns",
+      "file": "images/04_vertical_columns.png",
+      "expected_text": "彼は夜の街を歩いた。雨が静かに降っていた。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "vertical",
+        "novel-layout",
+        "tate-gaki"
+      ],
+      "notes": "Short tate-gaki two-column page. Real engines often struggle; edit path is safety net."
+    },
+    {
+      "id": "05_punctuation_mix",
+      "file": "images/05_punctuation_mix.png",
+      "expected_text": "本当か？信じられない！彼は笑った。",
+      "want_success": true,
+      "min_overlap": 0.85,
+      "tags": [
+        "happy",
+        "punctuation",
+        "splitSentences"
+      ],
+      "notes": "。！？ terminators for sentence split after OCR."
+    },
+    {
+      "id": "06_blank",
+      "file": "images/06_blank.png",
+      "expected_text": "",
+      "want_success": true,
+      "min_overlap": null,
+      "tags": [
+        "edge",
+        "empty",
+        "failure-or-empty"
+      ],
+      "notes": "No glyphs. Engine may return empty string or soft fail; must not crash ingest."
+    },
+    {
+      "id": "07_noise_only",
+      "file": "images/07_noise_only.png",
+      "expected_text": "",
+      "want_success": true,
+      "min_overlap": null,
+      "tags": [
+        "edge",
+        "noise",
+        "best-effort"
+      ],
+      "notes": "No readable prose. Best-effort empty/garbage; queue must stay intact."
+    },
+    {
+      "id": "08_low_contrast",
+      "file": "images/08_low_contrast.png",
+      "expected_text": "薄い文字は読みにくい。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "contrast"
+      ],
+      "notes": "Gray-on-gray; engine quality varies. Edit/paste fallback path."
+    },
+    {
+      "id": "09_dense_small",
+      "file": "images/09_dense_small.png",
+      "expected_text": "古い屋敷の奥にある書斎には、無数の本が積み上げられていた。\n埃っぽい空気の中で、時計だけが規則正しく時を刻んでいる。\n少年は息を潜め、禁じられた棚の一冊に手を伸ばした。\n表紙には誰も読めない文字が金色に輝いていたという。",
+      "want_success": true,
+      "min_overlap": 0.5,
+      "tags": [
+        "hard",
+        "dense",
+        "small-font"
+      ],
+      "notes": "Phone photo of dense page approximation."
+    },
+    {
+      "id": "10_large_sparse",
+      "file": "images/10_large_sparse.png",
+      "expected_text": "夏が来た。",
+      "want_success": true,
+      "min_overlap": 0.95,
+      "tags": [
+        "happy",
+        "large-font"
+      ],
+      "notes": "Few large glyphs; easy OCR baseline."
+    },
+    {
+      "id": "11_dark_background",
+      "file": "images/11_dark_background.png",
+      "expected_text": "夜の海は静かだった。",
+      "want_success": true,
+      "min_overlap": 0.5,
+      "tags": [
+        "hard",
+        "inverted"
+      ],
+      "notes": "Light text on dark; some engines need preprocess."
+    },
+    {
+      "id": "12_rotated",
+      "file": "images/12_rotated.png",
+      "expected_text": "机の上に手紙が残されていた。",
+      "want_success": true,
+      "min_overlap": 0.5,
+      "tags": [
+        "hard",
+        "skew",
+        "tilt",
+        "phone-capture",
+        "moderate"
+      ],
+      "notes": "~7° rotation like handheld phone shot (legacy id; see 31–40 tilt suite)."
+    },
+    {
+      "id": "13_non_novel_english",
+      "file": "images/13_non_novel_english.png",
+      "expected_text": "EXIT 12B  emergency only",
+      "want_success": true,
+      "min_overlap": 0.5,
+      "tags": [
+        "best-effort",
+        "non-novel"
+      ],
+      "notes": "Primary assumption is novel prose; non-novel is best-effort, no crash."
+    },
+    {
+      "id": "14_jpeg_artifacts",
+      "file": "images/14_jpeg_artifacts.jpg",
+      "expected_text": "圧縮された写真でも読めるか。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "jpeg",
+        "artifacts"
+      ],
+      "notes": "Low-quality JPEG as phone might produce after re-encode."
+    },
+    {
+      "id": "15_tiny",
+      "file": "images/15_tiny.png",
+      "expected_text": "小さい。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "edge",
+        "tiny",
+        "L2-smoke"
+      ],
+      "notes": "Minimal valid image bytes for L2/L3 upload smoke."
+    },
+    {
+      "id": "16_blur",
+      "file": "images/16_blur.png",
+      "expected_text": "焦点が合っていないページ。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "blur"
+      ],
+      "notes": "Soft focus; may need retake messaging in product."
+    },
+    {
+      "id": "17_quotes_dash",
+      "file": "images/17_quotes_dash.png",
+      "expected_text": "「こんにちは」——彼は言った．",
+      "want_success": true,
+      "min_overlap": 0.5,
+      "tags": [
+        "edge",
+        "punctuation",
+        "quotes"
+      ],
+      "notes": "Japanese quotes and dash; OCR often mangles brackets."
+    },
+    {
+      "id": "18_chapter_heading",
+      "file": "images/18_chapter_heading.png",
+      "expected_text": "第3章　始まりの朝",
+      "want_success": true,
+      "min_overlap": 0.7,
+      "tags": [
+        "happy",
+        "heading",
+        "numbers"
+      ],
+      "notes": "Chapter-style heading common in novels."
+    },
+    {
+      "id": "19_not_an_image",
+      "file": "images/19_not_an_image.bin",
+      "expected_text": "",
+      "want_success": false,
+      "min_overlap": null,
+      "tags": [
+        "edge",
+        "invalid",
+        "error-path"
+      ],
+      "notes": "Non-image bytes. Ingest should surface clear error; discard payload; queue unchanged."
+    },
+    {
+      "id": "20_largeish_noise",
+      "file": "images/20_largeish_noise.png",
+      "expected_text": "大きさの確認用。\n実10MB超過はテスト内で生成。",
+      "want_success": true,
+      "min_overlap": 0.5,
+      "tags": [
+        "edge",
+        "size",
+        "not-oversize"
+      ],
+      "notes": "Under 10 MB. True >10 MB reject uses in-test generated buffer (do not commit multi-MB blobs)."
+    },
+    {
+      "id": "21_novel_vertical_page",
+      "file": "images/21_novel_vertical_page.png",
+      "expected_text": "朝の光が障子を白く染めていた。彼は布団の中でしばらく天井を見つめてから、ゆっくりと上半身を起こした。昨日の出来事が、まだ夢の続きのように頭の中を巡っている。机の上には読みかけの本と、冷めた茶碗が置かれていた。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "bunkobon",
+        "multi-column"
+      ],
+      "notes": "Full synthetic bunkobon page: cream paper, mincho, columns right→left, top→bottom, footer page number. Primary novel OCR target layout."
+    },
+    {
+      "id": "22_novel_vertical_dialogue",
+      "file": "images/22_novel_vertical_dialogue.png",
+      "expected_text": "「今日はどこへ行くんだい」彼女は窓の外を見ながら言った。「まだ決めていない」彼は短く答えると、コートの襟を立てた。駅前はすでに人通りで賑わっていた。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "dialogue",
+        "quotes"
+      ],
+      "notes": "Vertical novel dialogue with 「」. Quote glyphs often confuse OCR order."
+    },
+    {
+      "id": "23_novel_vertical_dense",
+      "file": "images/23_novel_vertical_dense.png",
+      "expected_text": "古い屋敷の奥にある書斎には、無数の本が積み上げられていた。埃っぽい空気の中で、時計だけが規則正しく時を刻んでいる。少年は息を潜め、禁じられた棚の一冊に手を伸ばした。表紙には誰も読めない文字が金色に輝いていたという。外では蝉の声が途切れることなく続いていた。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "dense",
+        "small-font"
+      ],
+      "notes": "Dense multi-column tate-gaki; phone crop often loses edge columns."
+    },
+    {
+      "id": "24_novel_vertical_chapter_open",
+      "file": "images/24_novel_vertical_chapter_open.png",
+      "expected_text": "第一章　旅立ち列車は朝霧の中をゆっくりと走り始めた。窓に顔を寄せると、見知らぬ町の屋根が次々と流れていく。切符を握りしめた掌が、少し汗ばんでいた。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "chapter",
+        "heading"
+      ],
+      "notes": "Chapter opening: larger title column + body. Mixed sizes stress OCR."
+    },
+    {
+      "id": "25_novel_vertical_single_col",
+      "file": "images/25_novel_vertical_single_col.png",
+      "expected_text": "彼は静かに本を閉じた。そして窓の外を見た。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "single-column",
+        "phone-crop"
+      ],
+      "notes": "One vertical column only — common tight phone crop of a novel page."
+    },
+    {
+      "id": "26_novel_vertical_skewed",
+      "file": "images/26_novel_vertical_skewed.png",
+      "expected_text": "雨はいつまでも止む気配がなかった。傘の縁から落ちる水滴が、靴の先を黒く染めていく。それでも彼は歩き続けた。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "skew",
+        "tilt",
+        "phone-capture",
+        "moderate"
+      ],
+      "notes": "Vertical novel page + ~5° handheld skew + dark desk border (see also 35–37)."
+    },
+    {
+      "id": "27_novel_vertical_punctuation",
+      "file": "images/27_novel_vertical_punctuation.png",
+      "expected_text": "本当か？信じられない！彼は首を振った。しかし、もう後には引けなかった。明日になれば、すべてが変わるだろう。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "punctuation",
+        "splitSentences"
+      ],
+      "notes": "Tate-gaki with 。！？、 — sentence split after OCR must still work."
+    },
+    {
+      "id": "28_novel_vertical_stub_sentences",
+      "file": "images/28_novel_vertical_stub_sentences.png",
+      "expected_text": "私は本を読む。病院に行った。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "stub-aligned"
+      ],
+      "notes": "Known stub analyzer sentences rendered as vertical novel text."
+    },
+    {
+      "id": "29_novel_vertical_warm_light",
+      "file": "images/29_novel_vertical_warm_light.png",
+      "expected_text": "ランプの灯りだけが机を照らしていた。影が長く壁に伸び、文字の端がわずかににじんで見える。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "lighting"
+      ],
+      "notes": "Warm lamp reading light on vertical page; contrast shift vs daylight scan."
+    },
+    {
+      "id": "30_novel_vertical_soft_focus",
+      "file": "images/30_novel_vertical_soft_focus.png",
+      "expected_text": "風がページをめくった。彼は慌てて本を押さえ、読みかけの行を目で追った。",
+      "want_success": true,
+      "min_overlap": 0.2,
+      "tags": [
+        "hard",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "blur"
+      ],
+      "notes": "Vertical novel + mild defocus; retake vs edit safety net."
+    },
+    {
+      "id": "31_tilt_h_slight_cw",
+      "file": "images/31_tilt_h_slight_cw.png",
+      "expected_text": "机の上に手紙が残されていた。\n彼はそれを手に取った。\n窓の外では雨が降っている。",
+      "want_success": true,
+      "min_overlap": 0.55,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "horizontal",
+        "slight"
+      ],
+      "notes": "Horizontal prose, ~3° clockwise tilt + desk border. Typical slight misalign."
+    },
+    {
+      "id": "32_tilt_h_slight_ccw",
+      "file": "images/32_tilt_h_slight_ccw.png",
+      "expected_text": "机の上に手紙が残されていた。\n彼はそれを手に取った。\n窓の外では雨が降っている。",
+      "want_success": true,
+      "min_overlap": 0.55,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "horizontal",
+        "slight"
+      ],
+      "notes": "Horizontal prose, ~3° counter-clockwise. Pair with 31 for both lean directions."
+    },
+    {
+      "id": "33_tilt_h_moderate",
+      "file": "images/33_tilt_h_moderate.png",
+      "expected_text": "机の上に手紙が残されていた。\n彼はそれを手に取った。\n窓の外では雨が降っている。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "horizontal",
+        "moderate"
+      ],
+      "notes": "Horizontal prose ~8° tilt. Still 'slight' handheld, harder for deskew-less OCR."
+    },
+    {
+      "id": "34_tilt_h_strong",
+      "file": "images/34_tilt_h_strong.png",
+      "expected_text": "机の上に手紙が残されていた。彼はそれを手に取った。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "horizontal",
+        "strong"
+      ],
+      "notes": "~15° tilt. Upper bound of 'slightly tilted' phone shot before re-shoot."
+    },
+    {
+      "id": "35_tilt_v_slight_cw",
+      "file": "images/35_tilt_v_slight_cw.png",
+      "expected_text": "夕方の駅は通勤の人波で混雑していた。彼女は改札を抜け、ホームの端で電車を待った。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "slight"
+      ],
+      "notes": "Tate-gaki bunkobon page ~3° CW. Combines vertical layout + small tilt."
+    },
+    {
+      "id": "36_tilt_v_slight_ccw",
+      "file": "images/36_tilt_v_slight_ccw.png",
+      "expected_text": "夕方の駅は通勤の人波で混雑していた。彼女は改札を抜け、ホームの端で電車を待った。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "slight"
+      ],
+      "notes": "Tate-gaki ~3° CCW. Pair with 35."
+    },
+    {
+      "id": "37_tilt_v_moderate",
+      "file": "images/37_tilt_v_moderate.png",
+      "expected_text": "夕方の駅は通勤の人波で混雑していた。彼女は改札を抜け、ホームの端で電車を待った。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "moderate"
+      ],
+      "notes": "Vertical novel ~7° tilt. Common couch/phone capture error."
+    },
+    {
+      "id": "38_tilt_h_multi_sentence",
+      "file": "images/38_tilt_h_multi_sentence.png",
+      "expected_text": "病院に行った。\n今日は雨だ。\n私は本を読む。",
+      "want_success": true,
+      "min_overlap": 0.45,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "horizontal",
+        "multi-sentence",
+        "slight",
+        "stub-aligned"
+      ],
+      "notes": "Multi-sentence horizontal + ~4.5° tilt; OCR then splitSentences."
+    },
+    {
+      "id": "39_tilt_h_with_blur",
+      "file": "images/39_tilt_h_with_blur.png",
+      "expected_text": "焦点も傾きも少しずれている。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "horizontal",
+        "blur",
+        "compound"
+      ],
+      "notes": "Slight tilt (~6°) plus soft focus. Compound capture defect."
+    },
+    {
+      "id": "40_tilt_v_dialogue",
+      "file": "images/40_tilt_v_dialogue.png",
+      "expected_text": "「まだ帰らないの」「もう少しだけ」二人は黙って夕暮れを見ていた。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "tilt",
+        "phone-capture",
+        "vertical",
+        "tate-gaki",
+        "novel",
+        "dialogue",
+        "slight"
+      ],
+      "notes": "Vertical dialogue 「」 with ~4° tilt."
+    },
+    {
+      "id": "41_brightness_dim",
+      "file": "images/41_brightness_dim.png",
+      "expected_text": "明るさの違う写真でも読めるか。\n彼はページをめくって読み続けた。\n窓辺の光が文字を白く飛ばしている。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "brightness",
+        "dim",
+        "horizontal"
+      ],
+      "notes": "Globally underexposed (~0.45). Phone in dark room."
+    },
+    {
+      "id": "42_brightness_bright",
+      "file": "images/42_brightness_bright.png",
+      "expected_text": "明るさの違う写真でも読めるか。\n彼はページをめくって読み続けた。\n窓辺の光が文字を白く飛ばしている。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "brightness",
+        "bright",
+        "horizontal"
+      ],
+      "notes": "Globally overexposed (~1.55). Window glare style."
+    },
+    {
+      "id": "43_brightness_very_dark",
+      "file": "images/43_brightness_very_dark.png",
+      "expected_text": "明るさの違う写真でも読めるか。\n彼はページをめくって読み続けた。\n窓辺の光が文字を白く飛ばしている。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "brightness",
+        "dim",
+        "horizontal"
+      ],
+      "notes": "Very dark capture; may need retake messaging."
+    },
+    {
+      "id": "44_brightness_mixed_lr",
+      "file": "images/44_brightness_mixed_lr.png",
+      "expected_text": "明るさの違う写真でも読めるか。\n彼はページをめくって読み続けた。\n窓辺の光が文字を白く飛ばしている。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "brightness",
+        "mixed",
+        "horizontal",
+        "split"
+      ],
+      "notes": "Single shot: left half dark, right half bright. Hard shadow edge."
+    },
+    {
+      "id": "45_brightness_mixed_tb",
+      "file": "images/45_brightness_mixed_tb.png",
+      "expected_text": "明るさの違う写真でも読めるか。\n彼はページをめくって読み続けた。\n窓辺の光が文字を白く飛ばしている。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "brightness",
+        "mixed",
+        "horizontal",
+        "split"
+      ],
+      "notes": "Top overexposed, bottom underexposed in one frame."
+    },
+    {
+      "id": "46_brightness_gradient",
+      "file": "images/46_brightness_gradient.png",
+      "expected_text": "明るさの違う写真でも読めるか。\n彼はページをめくって読み続けた。\n窓辺の光が文字を白く飛ばしている。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "brightness",
+        "mixed",
+        "horizontal",
+        "gradient"
+      ],
+      "notes": "Smooth lighting falloff across page (window + room shadow)."
+    },
+    {
+      "id": "47_brightness_mixed_vertical",
+      "file": "images/47_brightness_mixed_vertical.png",
+      "expected_text": "光と影がページを斜めに横切っていた。それでも彼は黙って読み進めた。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "brightness",
+        "mixed",
+        "vertical",
+        "tate-gaki",
+        "novel"
+      ],
+      "notes": "Tate-gaki page with left-dark/right-bright mixed lighting."
+    },
+    {
+      "id": "48_partial_blur_bottom",
+      "file": "images/48_partial_blur_bottom.png",
+      "expected_text": "上の行ははっきり見える。\n中ほどの行もまだ読める。\n下の行だけ焦点が甘い。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "blur",
+        "partial",
+        "mixed",
+        "horizontal"
+      ],
+      "notes": "Same shot: top sharp, bottom half blurred (field curvature / AF miss)."
+    },
+    {
+      "id": "49_partial_blur_center_band",
+      "file": "images/49_partial_blur_center_band.png",
+      "expected_text": "端の文字は鮮明だ。\n中央だけが少し滲んでいる。\n再び端は鮮明に戻る。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "blur",
+        "partial",
+        "mixed",
+        "horizontal"
+      ],
+      "notes": "Only middle horizontal band blurred; edges stay sharp."
+    },
+    {
+      "id": "50_mixed_fonts",
+      "file": "images/50_mixed_fonts.png",
+      "expected_text": "ゴシック体の見出し行。\n明朝体で本文が続く。\nまたゴシックに戻る行。\n最後も明朝で締める。",
+      "want_success": true,
+      "min_overlap": 0.45,
+      "tags": [
+        "hard",
+        "mixed",
+        "font",
+        "horizontal"
+      ],
+      "notes": "Gothic + mincho alternating lines in one shot."
+    },
+    {
+      "id": "51_mixed_thickness",
+      "file": "images/51_mixed_thickness.png",
+      "expected_text": "細い字の普通の行。\n太い字で強調された行。\n再び細い字に戻る。\nもう一度太い見出し風。",
+      "want_success": true,
+      "min_overlap": 0.45,
+      "tags": [
+        "hard",
+        "mixed",
+        "thickness",
+        "horizontal"
+      ],
+      "notes": "Regular + faux-bold strokes in same page."
+    },
+    {
+      "id": "52_mixed_colours",
+      "file": "images/52_mixed_colours.png",
+      "expected_text": "黒い本文の文字。\n青い注釈のような行。\n赤い強調の一言。\n灰色で薄いメモ書き。",
+      "want_success": true,
+      "min_overlap": 0.4,
+      "tags": [
+        "hard",
+        "mixed",
+        "colour",
+        "horizontal"
+      ],
+      "notes": "Black / blue / red / gray ink mixed in one shot."
+    },
+    {
+      "id": "53_mixed_font_thickness_colour",
+      "file": "images/53_mixed_font_thickness_colour.png",
+      "expected_text": "章タイトルは太い黒。\n本文は明朝の細い黒。\n傍注は細い青字。\n注意書きは赤い太字。",
+      "want_success": true,
+      "min_overlap": 0.35,
+      "tags": [
+        "hard",
+        "mixed",
+        "font",
+        "thickness",
+        "colour",
+        "horizontal",
+        "compound"
+      ],
+      "notes": "Font face + stroke weight + ink colour all vary in one shot."
+    },
+    {
+      "id": "54_mixed_style_partial_blur",
+      "file": "images/54_mixed_style_partial_blur.png",
+      "expected_text": "鮮明な太い見出し。\n鮮明な本文の一行。\nここから下は少し滲む。\n色も青く薄い注記。",
+      "want_success": true,
+      "min_overlap": 0.3,
+      "tags": [
+        "hard",
+        "mixed",
+        "blur",
+        "partial",
+        "font",
+        "thickness",
+        "colour",
+        "compound"
+      ],
+      "notes": "Style mix plus bottom half soft focus — multi-defect single shot."
+    },
+    {
+      "id": "55_mixed_brightness_colour_blur",
+      "file": "images/55_mixed_brightness_colour_blur.png",
+      "expected_text": "光の当たる行は白い。\n影の中の行は暗い。\n色付きの行も混ざる。",
+      "want_success": true,
+      "min_overlap": 0.25,
+      "tags": [
+        "hard",
+        "mixed",
+        "brightness",
+        "colour",
+        "blur",
+        "partial",
+        "compound"
+      ],
+      "notes": "Gradient lighting + red ink line + right-side partial blur."
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{{define "sentence_candidates"}}
+{{if .Error}}
+<div class="error" data-testid="page-text-error" role="alert">{{.Error}}</div>
+{{else}}
+<div data-testid="sentence-candidates" id="sentence-candidates-inner">
+  {{if .Candidates}}
+  <p class="muted" data-testid="candidates-hint">Tap a sentence to analyze. Edit in the box below if needed.</p>
+  <ul class="candidate-list" data-testid="candidate-list">
+    {{- range $i, $s := .Candidates}}
+    <li data-testid="sentence-candidate" data-index="{{$i}}">
+      <form method="post" action="/analyze"
+            hx-post="/analyze"
+            hx-target="#analyze-result"
+            hx-swap="innerHTML">
+        <input type="hidden" name="sentence" value="{{$s}}">
+        <button type="submit" class="candidate-btn" data-testid="candidate-pick" data-index="{{$i}}" lang="ja">{{$s}}</button>
+      </form>
+    </li>
+    {{- end}}
+  </ul>
+  {{else}}
+  <p class="muted" data-testid="candidates-empty">No sentences found. Paste page text and try again.</p>
+  {{end}}
+</div>
+{{end}}
+{{end}}

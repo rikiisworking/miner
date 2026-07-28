@@ -90,6 +90,7 @@ func New(cfg Config) (*Server, error) {
 	f.Get("/", s.handleIndex)
 	f.Post("/unlock", s.handleUnlock)
 	f.Get("/home", s.requireAuth, s.handleHome)
+	f.Post("/page-text", s.requireAuth, s.handlePageText)
 	f.Post("/analyze", s.requireAuth, s.handleAnalyze)
 	f.Post("/unknowns", s.requireAuth, s.handleAddUnknown)
 	f.Get("/queue", s.requireAuth, s.handleQueue)
@@ -102,9 +103,6 @@ func New(cfg Config) (*Server, error) {
 
 // App exposes the underlying Fiber app (tests).
 func (s *Server) App() *fiber.App { return s.fiber }
-
-// Addr returns the listen address.
-func (s *Server) Addr() string { return s.addr }
 
 // Listen starts the HTTP server (blocking).
 func (s *Server) Listen() error {
@@ -153,6 +151,24 @@ func (s *Server) handleUnlock(c *fiber.Ctx) error {
 
 func (s *Server) handleHome(c *fiber.Ctx) error {
 	return s.render(c, "shell", nil)
+}
+
+// handlePageText proposes sentence candidates from multi-sentence page paste (ticket 05).
+// Ephemeral only — does not write the durable queue.
+func (s *Server) handlePageText(c *fiber.Ctx) error {
+	pageText := c.FormValue("page_text")
+	cands := s.app.ProposeSentences(pageText)
+	if len(cands) == 0 {
+		c.Status(fiber.StatusBadRequest)
+		return s.render(c, "sentence_candidates", map[string]any{
+			"Error":      "Enter page text to split into sentences.",
+			"Candidates": nil,
+		})
+	}
+	return s.render(c, "sentence_candidates", map[string]any{
+		"Error":      "",
+		"Candidates": cands,
+	})
 }
 
 func (s *Server) handleAnalyze(c *fiber.Ctx) error {

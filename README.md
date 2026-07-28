@@ -20,7 +20,8 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 | 02 | Sentence analyze (paste): furigana + content words | done |
 | 03 | Mark unknowns → durable queue | done |
 | 04 | Export Markdown (+ Clear all) | done (text-only path complete) |
-| 05+ | Page text / OCR / camera / hardening | next |
+| 05 | Full-page text → pick sentence | done |
+| 06+ | Photo OCR / camera / hardening | next |
 
 ### Configure
 

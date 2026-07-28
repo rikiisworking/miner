@@ -258,6 +258,155 @@ func TestAnalyze_Authenticated_FixtureSentence_RubyAndContent(t *testing.T) {
 	}
 }
 
+func TestPageText_Authenticated_ReturnsCandidates(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+
+	form := url.Values{"page_text": {"病院に行った。今日は雨だ。私は本を読む。"}}
+	req := httptest.NewRequest(http.MethodPost, "/page-text", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(html, `data-testid="sentence-candidates"`) {
+		t.Fatalf("missing candidates: %s", html)
+	}
+	if strings.Count(html, `data-testid="sentence-candidate"`) != 3 {
+		t.Fatalf("want 3 candidates: %s", html)
+	}
+	if !strings.Contains(html, "病院に行った。") || !strings.Contains(html, "私は本を読む。") {
+		t.Fatalf("missing sentence text: %s", html)
+	}
+	if !strings.Contains(html, `hx-post="/analyze"`) {
+		t.Fatalf("candidates should post to analyze: %s", html)
+	}
+}
+
+func TestPageText_Empty_ClearError(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+
+	form := url.Values{"page_text": {"   "}}
+	req := httptest.NewRequest(http.MethodPost, "/page-text", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `data-testid="page-text-error"`) {
+		t.Fatalf("missing page-text-error: %s", body)
+	}
+}
+
+func TestPageText_Unauthenticated_Rejected(t *testing.T) {
+	s := newTestServer(t)
+	form := url.Values{"page_text": {"病院に行った。"}}
+	req := httptest.NewRequest(http.MethodPost, "/page-text", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+}
+
+func TestPageText_ThenAnalyze_SelectCandidateOverHTTP(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+
+	// Propose
+	form := url.Values{"page_text": {"病院に行った。私は本を読む。"}}
+	req := httptest.NewRequest(http.MethodPost, "/page-text", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("page-text status=%d", resp.StatusCode)
+	}
+
+	// Select second candidate via analyze (same as pick button)
+	form2 := url.Values{"sentence": {"私は本を読む。"}}
+	req2 := httptest.NewRequest(http.MethodPost, "/analyze", strings.NewReader(form2.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req2.AddCookie(c)
+	}
+	resp2, err := s.App().Test(req2, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+	html := string(body)
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("analyze status=%d body=%s", resp2.StatusCode, html)
+	}
+	if !strings.Contains(html, `data-testid="analyze-success"`) {
+		t.Fatalf("missing analyze-success: %s", html)
+	}
+	if !strings.Contains(html, `data-surface="本"`) {
+		t.Fatalf("expected content for selected sentence: %s", html)
+	}
+	// OOB working-sentence textarea updated
+	if !strings.Contains(html, `hx-swap-oob="true"`) || !strings.Contains(html, "私は本を読む。") {
+		t.Fatalf("expected OOB sentence sync: %s", html)
+	}
+}
+
+func TestHome_ShowsPageTextSection(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/home", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if !strings.Contains(html, `data-testid="page-text-section"`) {
+		t.Fatalf("missing page-text-section: %s", html)
+	}
+	if !strings.Contains(html, `data-testid="page-text-input"`) {
+		t.Fatalf("missing page-text-input: %s", html)
+	}
+}
+
 func TestAnalyze_Unauthenticated_Rejected(t *testing.T) {
 	s := newTestServer(t)
 	form := url.Values{"sentence": {"私は本を読む。"}}

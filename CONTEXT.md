@@ -21,6 +21,8 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 | **Content word** | Token shown in list (nouns/verbs/adjectives/…); drop particles/aux/symbols. |
 | **Export document** | UTF-8 Markdown nested list; order by first-unknown-at. **Does not clear queue.** `GET /export`. |
 | **Clear all** | Separate control; confirm when N≥1; only way to wipe queue in v1. `POST /queue/clear`. |
+| **Page text / candidates** | Multi-sentence paste → `SplitSentences` → pick one as working sentence → analyze. Ephemeral; no queue write until mark unknown. `POST /page-text`. |
+| **SplitSentences** | Pure helper: split on `。！？` (+ fullwidth `．`, halfwidth `!?`). No terminator → one blob. Empty → empty list. |
 
 Avoid: Card, SM-2 Review, lemma identity, Article/RSS Source (other products).
 
@@ -47,7 +49,7 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
 2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore; OCR later. Adapters under `internal/adapters/` (pinauth, analyzer stub, queuestore file + mem for tests).
-3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. HTMX partials for analyze + unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `auth_error` fragment (never a feature partial).
+3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. HTMX partials for page-text candidates, analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `auth_error` fragment (never a feature partial).
 4. **web.FS()** — templates + static assets (embed by default).
 
 ## Testing layers

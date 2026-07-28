@@ -22,7 +22,8 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 | 04 | Export Markdown (+ Clear all) | done (text-only path complete) |
 | 05 | Full-page text → pick sentence | done |
 | 06 | Photo ingest + local OCR (file upload) | done (Tesseract local adapter) |
-| 07+ | Camera capture / UX hardening | next |
+| 07 | Phone camera capture UX | in progress |
+| 08 | Novel UX hardening | next |
 
 ### Configure
 
@@ -90,6 +91,10 @@ After PIN unlock: paste/type Japanese text → **Analyze** → HTMX swaps HTML w
 Analyzer is a **port** (`JapaneseAnalyzer`). Production wires `internal/adapters/analyzer.Stub` (fixture sentences + whole-text fallback) until a real local morphological engine is chosen. Content vs non-content uses an explicit flag on tokens; real adapters map POS tags into that flag.
 
 Known stub fixtures: `私は本を読む。`, `病院に行った。`.
+
+### Camera capture (ticket 07)
+
+After PIN unlock: **Open camera** → live preview → **Capture page** → same `POST /ingest` multipart path as file upload (no new routes or MiningApp rules). Permission denied / no camera → in-page message; **Page photo** upload remains. Headless CI does not require a webcam.
 
 ### Photo ingest (ticket 06)
 

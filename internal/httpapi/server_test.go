@@ -271,6 +271,56 @@ func TestAnalyze_Authenticated_FixtureSentence_RubyAndContent(t *testing.T) {
 	}
 }
 
+func TestAnalyze_Authenticated_Kagome_RubyAndContent(t *testing.T) {
+	kagome, err := analyzer.NewKagome()
+	if err != nil {
+		t.Fatalf("NewKagome: %v", err)
+	}
+	s := newTestServerWith(t, kagome, nil, defaultTestOCR)
+	cookies := unlockCookies(t, s)
+
+	form := url.Values{"sentence": {"私は本を読む。"}}
+	req := httptest.NewRequest(http.MethodPost, "/analyze", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(html, `data-testid="analyze-success"`) {
+		t.Fatalf("missing analyze-success: %s", html)
+	}
+	if !strings.Contains(html, "<ruby") || !strings.Contains(html, "<rt>") {
+		t.Fatalf("expected HTML ruby furigana: %s", html)
+	}
+	if !strings.Contains(html, "わたし") || !strings.Contains(html, "ほん") {
+		t.Fatalf("expected readings in body: %s", html)
+	}
+	if !strings.Contains(html, `data-surface="本"`) {
+		t.Fatalf("expected data-surface=本: %s", html)
+	}
+	if strings.Contains(html, `data-surface="は"`) {
+		t.Fatalf("particle must not be content-word: %s", html)
+	}
+	if strings.Contains(html, `data-surface="を"`) {
+		t.Fatalf("particle must not be content-word: %s", html)
+	}
+	passID := extractHiddenValue(html, "pass_id")
+	if passID == "" {
+		t.Fatalf("expected non-empty pass_id: %s", html)
+	}
+}
+
 func TestPageText_Authenticated_ReturnsCandidates(t *testing.T) {
 	s := newTestServer(t)
 	cookies := unlockCookies(t, s)

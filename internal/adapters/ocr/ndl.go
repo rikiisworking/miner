@@ -344,12 +344,13 @@ func (n *NDL) Recognize(ctx context.Context, image []byte) (string, error) {
 		return "", fmt.Errorf("ocr: temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := tmp.Write(image); err != nil {
 		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("ocr: write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("ocr: close temp: %w", err)
 	}
 
@@ -363,10 +364,16 @@ func (n *NDL) Recognize(ctx context.Context, image []byte) (string, error) {
 		ch <- result{text, err}
 	}()
 
+	// Always join the worker goroutine before removing tmp or returning.
+	// Returning early on cancel left recognizePath holding n.mu (and needing
+	// tmpPath) while MiningApp cleared single-flight — next Recognize hung.
 	select {
 	case <-ctx.Done():
+		<-ch
+		_ = os.Remove(tmpPath)
 		return "", ctx.Err()
 	case r := <-ch:
+		_ = os.Remove(tmpPath)
 		return r.text, r.err
 	}
 }

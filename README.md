@@ -52,9 +52,9 @@ Queue survives process restart (file under `MINER_DATA_DIR`). Session cookie doe
 make test
 ```
 
-- **L1:** `internal/app` — MiningApp unlock / analyze / `AddUnknown` / `ListQueue` / `ExportMarkdown` / `ClearAll` (in-memory + real file store)  
-- **L2:** `internal/httpapi` — Fiber `app.Test` session / analyze / unknowns / queue / export / clear  
-- **L3:** `e2e` — headless browser (rod): PIN → analyze → mark unknown → queue → export → clear all
+- **L1:** `internal/app` — MiningApp unlock / analyze / page-text / `AddUnknown` / `ListQueue` / `ExportMarkdown` / `ClearAll` / `IngestPage` (fakes + mem/file store)  
+- **L2:** `internal/httpapi` — Fiber `app.Test` session / page-text / analyze / unknowns / queue / export / clear  
+- **L3:** `e2e` — headless browser (rod): PIN → page-text pick → analyze → mark unknown → queue → export → clear all
 
 L3 uses headless Chromium via [rod](https://go-rod.github.io/) (downloads browser once into `~/.cache/rod`).  
 HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not hang on external network.
@@ -122,14 +122,17 @@ Newlines inside sentence/surface text are flattened to spaces so list structure 
 ```
 cmd/miner/                    # process entry
 internal/app/                 # MiningApp facade (test seam)
-internal/ports/               # PinAuth, JapaneseAnalyzer, QueueStore, …
+internal/ports/               # PinAuth, JapaneseAnalyzer, QueueStore, OcrEngine
 internal/adapters/pinauth/    # static shared PIN
 internal/adapters/analyzer/   # stub JapaneseAnalyzer
-internal/adapters/queuestore/ # file QueueStore (JSON)
+internal/adapters/ocr/        # stub OcrEngine (real local engine later)
+internal/adapters/queuestore/ # file + mem QueueStore
 internal/httpapi/             # Fiber + templates
-web/templates/                # shell, pin, analyze_result, unknown_feedback, queue
+internal/ocrtest/             # OCR fixture loader (tests)
+web/templates/                # shell, pin, analyze_result, unknown_feedback, queue, …
 web/static/                   # vendored htmx
 e2e/                          # UI click smoke
+testdata/ocr/                 # synthetic OCR page fixtures
 .scratch/novel-miner          # product plans / tickets
 data/                         # runtime queue (created on run; gitignored)
 ```

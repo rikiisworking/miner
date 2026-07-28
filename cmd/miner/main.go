@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
+	"github.com/rikiisworking/miner/internal/adapters/ocr"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
@@ -46,6 +47,8 @@ func main() {
 		pinauth.Static{Secret: pin},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
+		// Stub until ticket 06 wires a real local OCR engine.
+		ocr.Stub{},
 	)
 	srv, err := httpapi.New(httpapi.Config{
 		MiningApp: mining,

@@ -11,10 +11,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"github.com/rikiisworking/miner/internal/app"
 )
 
-// MaxUploadBytes is the product cap (ticket 06 / spec): reject larger payloads.
-const MaxUploadBytes = 10 * 1024 * 1024
+// MaxUploadBytes re-exports the product cap so fixture tests assert against the
+// same number MiningApp.IngestPage and HTTP BodyLimit use. Do not redefine.
+const MaxUploadBytes = app.MaxUploadBytes
 
 // Case is one row from testdata/ocr/cases.json.
 type Case struct {

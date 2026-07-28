@@ -74,8 +74,12 @@ func New(cfg Config) (*Server, error) {
 		addr:      addr,
 	}
 
+	// BodyLimit must allow product MaxUploadBytes images plus multipart framing.
+	// Semantic oversize still rejected in MiningApp.IngestPage (L1).
+	const multipartOverhead = 512 * 1024
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
+		BodyLimit:             app.MaxUploadBytes + multipartOverhead,
 	})
 
 	staticFS, err := fs.Sub(cfg.WebFS, "static")
@@ -157,13 +161,16 @@ func (s *Server) handleHome(c *fiber.Ctx) error {
 // Ephemeral only — does not write the durable queue.
 func (s *Server) handlePageText(c *fiber.Ctx) error {
 	pageText := c.FormValue("page_text")
-	cands := s.app.ProposeSentences(pageText)
-	if len(cands) == 0 {
-		c.Status(fiber.StatusBadRequest)
-		return s.render(c, "sentence_candidates", map[string]any{
-			"Error":      "Enter page text to split into sentences.",
-			"Candidates": nil,
-		})
+	cands, err := s.app.ProposeSentences(pageText)
+	if err != nil {
+		if errors.Is(err, app.ErrEmptyPage) {
+			c.Status(fiber.StatusBadRequest)
+			return s.render(c, "sentence_candidates", map[string]any{
+				"Error":      "Enter page text to split into sentences.",
+				"Candidates": nil,
+			})
+		}
+		return err
 	}
 	return s.render(c, "sentence_candidates", map[string]any{
 		"Error":      "",

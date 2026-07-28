@@ -16,13 +16,12 @@ type QueueEntry struct {
 }
 
 // QueueStore persists queue entries across process restart.
+// Product surface is intentionally narrow: create, list, atomic append, clear.
+// No Get/Update — MiningApp never needs generic CRUD; AppendUnknown owns mutation.
+// Images and OCR text must not live here (ephemeral ingest only).
 type QueueStore interface {
 	// Create inserts a new entry. ID must be unique.
 	Create(entry QueueEntry) error
-	// Update replaces an existing entry by ID.
-	Update(entry QueueEntry) error
-	// Get returns the entry for id, or false if missing.
-	Get(id string) (QueueEntry, bool, error)
 	// List returns all entries (order not required). Export sorts by first-unknown-at.
 	List() ([]QueueEntry, error)
 	// AppendUnknown atomically appends surface if absent (single locked RMW).

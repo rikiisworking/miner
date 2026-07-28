@@ -21,7 +21,8 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 | 03 | Mark unknowns → durable queue | done |
 | 04 | Export Markdown (+ Clear all) | done (text-only path complete) |
 | 05 | Full-page text → pick sentence | done |
-| 06+ | Photo OCR / camera / hardening | next |
+| 06 | Photo ingest + local OCR (file upload) | done (stub OCR; real engine later) |
+| 07+ | Camera capture / UX hardening | next |
 
 ### Configure
 
@@ -52,23 +53,27 @@ Queue survives process restart (file under `MINER_DATA_DIR`). Session cookie doe
 make test
 ```
 
-- **L1:** `internal/app` — MiningApp unlock / analyze / page-text / `AddUnknown` / `ListQueue` / `ExportMarkdown` / `ClearAll` / `IngestPage` (fakes + mem/file store)  
-- **L2:** `internal/httpapi` — Fiber `app.Test` session / page-text / analyze / unknowns / queue / export / clear  
-- **L3:** `e2e` — headless browser (rod): PIN → page-text pick → analyze → mark unknown → queue → export → clear all
+- **L1:** `internal/app` — MiningApp unlock / analyze / page-text / `IngestPage` / `AddUnknown` / `ListQueue` / `ExportMarkdown` / `ClearAll` (fakes + mem/file store)  
+- **L2:** `internal/httpapi` — Fiber `app.Test` session / page-text / multipart ingest / analyze / unknowns / queue / export / clear  
+- **L3:** `e2e` — headless browser (rod): PIN → page-text or photo upload → pick → analyze → mark unknown → queue → export → clear all
 
 L3 uses headless Chromium via [rod](https://go-rod.github.io/) (downloads browser once into `~/.cache/rod`).  
 HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not hang on external network.
 
-### Learner flow (text-only path)
+### Learner flow
 
 1. **PIN** unlock → mining shell  
-2. **Paste** a Japanese sentence → **Analyze** → HTML ruby furigana + content-word list  
-3. **Tap** a content-word row → save as unknown (feedback on save / duplicate)  
-4. **Queue** nav → list of entries (sentence + unknowns)  
-5. **Export Markdown** → download UTF-8 nested list (queue unchanged)  
-6. **Clear all** → confirm → wipe queue (disabled when empty)
+2. **Ingest** a page — either:
+   - **Upload** a novel-page image (≤10 MiB) → local OCR → sentence candidates, or  
+   - **Paste** multi-sentence page text → sentence candidates, or  
+   - **Paste/type** a single working sentence  
+3. **Pick** a candidate (or edit the working sentence) → **Analyze** → HTML ruby furigana + content-word list  
+4. **Tap** a content-word row → save as unknown (feedback on save / duplicate)  
+5. **Queue** nav → list of entries (sentence + unknowns)  
+6. **Export Markdown** → download UTF-8 nested list (queue unchanged)  
+7. **Clear all** → confirm → wipe queue (disabled when empty)
 
-No per-unknown/per-entry remove in v1.
+No per-unknown/per-entry remove in v1. Photos discarded after OCR (success or fail). Primary OCR material = novel prose; non-novel is best-effort.
 
 ### Analyze (ticket 02)
 
@@ -82,6 +87,23 @@ After PIN unlock: paste/type Japanese text → **Analyze** → HTMX swaps HTML w
 Analyzer is a **port** (`JapaneseAnalyzer`). Production wires `internal/adapters/analyzer.Stub` (fixture sentences + whole-text fallback) until a real local morphological engine is chosen. Content vs non-content uses an explicit flag on tokens; real adapters map POS tags into that flag.
 
 Known stub fixtures: `私は本を読む。`, `病院に行った。`.
+
+### Photo ingest (ticket 06)
+
+After PIN unlock: **Page photo** file input → `POST /ingest` (multipart field `image`) → HTMX swaps sentence candidates (same partial as page-text). Rules:
+
+- Session required  
+- **Max 10 MiB** (`app.MaxUploadBytes`); oversize rejected with clear error; OCR not run  
+- **Single-flight** ingest (`ErrIngestBusy` / 409); upload button disabled via `hx-disabled-elt` while in flight  
+- OCR via **OcrEngine** port; failure is visible and does **not** touch the durable queue  
+- Image bytes not written under `MINER_DATA_DIR`; discarded when the request finishes  
+- Success reuses ticket 05 pick → analyze → mark → export pipeline  
+
+Production currently wires `internal/adapters/ocr.Stub` (deterministic test double). L1/L2/L3 use fakes / `ByBytes` maps; real local engine is an adapter swap (no product rewrite). Synthetic page fixtures: `testdata/ocr/`.
+
+| Method | Path | Body / notes |
+|--------|------|----------------|
+| `POST` | `/ingest` | multipart `image` → candidates partial (or error) |
 
 ### Unknowns + queue (ticket 03)
 

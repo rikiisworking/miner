@@ -51,7 +51,7 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
 2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer stub, ocr stub, queuestore file + mem for tests).
-3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text candidates, analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `auth_error` fragment (never a feature partial).
+3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text / photo-ingest candidates (`POST /ingest`), analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `auth_error` fragment (never a feature partial).
 4. **web.FS()** — templates + static assets (embed by default).
 
 ## Testing layers

@@ -75,6 +75,13 @@
       cursor: pointer; word-break: break-word;
     }
     .candidate-btn:active { opacity: 0.85; background: #8882; }
+    input[type="file"] {
+      display: block; width: 100%; box-sizing: border-box;
+      font-size: 1rem; padding: 0.65rem 0; margin-bottom: 0.75rem;
+    }
+    button:disabled, .content-word-btn:disabled {
+      opacity: 0.55; cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -84,7 +91,27 @@
     <a href="/queue" data-testid="nav-queue">Queue</a>
   </nav>
   <h1>miner</h1>
-  <p class="muted" data-testid="shell-ready">Unlocked. Paste a page or a sentence to mine.</p>
+  <p class="muted" data-testid="shell-ready">Unlocked. Upload a page photo, paste text, or type a sentence.</p>
+
+  <section data-testid="photo-upload-section" aria-labelledby="photo-upload-heading">
+    <h2 id="photo-upload-heading">Page photo</h2>
+    <p class="muted">Upload a novel page image (max 10&nbsp;MB). OCR runs on this PC; the image is discarded after.</p>
+    <form method="post" action="/ingest"
+          enctype="multipart/form-data"
+          hx-post="/ingest"
+          hx-encoding="multipart/form-data"
+          hx-target="#sentence-candidates"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          data-testid="photo-upload-form">
+      <label for="image">Page image</label>
+      <input type="file" id="image" name="image"
+             accept="image/*"
+             data-testid="photo-input"
+             required>
+      <button type="submit" data-testid="photo-submit">Read page photo</button>
+    </form>
+  </section>
 
   <section data-testid="page-text-section" aria-labelledby="page-text-heading">
     <h2 id="page-text-heading">Page text</h2>

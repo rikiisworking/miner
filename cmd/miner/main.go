@@ -47,7 +47,7 @@ func main() {
 		pinauth.Static{Secret: pin},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
-		// Stub until ticket 06 wires a real local OCR engine.
+		// Deterministic stub until a real local OCR adapter is chosen (port stays OcrEngine).
 		ocr.Stub{},
 	)
 	srv, err := httpapi.New(httpapi.Config{

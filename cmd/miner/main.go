@@ -31,12 +31,12 @@ func main() {
 	if dataDir == "" {
 		dataDir = "data"
 	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		log.Fatalf("data dir: %v", err)
 	}
 	queuePath := filepath.Join(dataDir, "queue.json")
 
-	webFS, err := resolveWebFS()
+	webFS, err := resolveWebFS(os.Getenv("MINER_WEB_ROOT"))
 	if err != nil {
 		log.Fatalf("web assets: %v", err)
 	}
@@ -68,9 +68,9 @@ func main() {
 	}
 }
 
-// resolveWebFS prefers embedded assets; MINER_WEB_ROOT forces on-disk templates/static for dev.
-func resolveWebFS() (fs.FS, error) {
-	if root := os.Getenv("MINER_WEB_ROOT"); root != "" {
+// resolveWebFS prefers embedded assets; non-empty root forces on-disk templates/static for dev.
+func resolveWebFS(root string) (fs.FS, error) {
+	if root != "" {
 		if st, err := os.Stat(root); err != nil || !st.IsDir() {
 			return nil, fmt.Errorf("MINER_WEB_ROOT=%q: %w", root, err)
 		}

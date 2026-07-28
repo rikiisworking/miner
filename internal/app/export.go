@@ -7,7 +7,8 @@ import (
 	"github.com/rikiisworking/miner/internal/ports"
 )
 
-// ListQueue returns all durable queue entries.
+// ListQueue returns all durable queue entries in product display order:
+// first-unknown-at ascending, tie-break entry id ascending (same as export).
 func (m *MiningApp) ListQueue() ([]ports.QueueEntry, error) {
 	list, err := m.queue.List()
 	if err != nil {
@@ -16,7 +17,7 @@ func (m *MiningApp) ListQueue() ([]ports.QueueEntry, error) {
 	if list == nil {
 		return []ports.QueueEntry{}, nil
 	}
-	return list, nil
+	return sortQueueEntries(list), nil
 }
 
 // ExportMarkdown builds a UTF-8 Markdown nested list of exportable queue entries.
@@ -34,13 +35,7 @@ func (m *MiningApp) ExportMarkdown() (string, error) {
 			exportable = append(exportable, e)
 		}
 	}
-	sort.SliceStable(exportable, func(i, j int) bool {
-		a, b := exportable[i], exportable[j]
-		if !a.FirstUnknownAt.Equal(b.FirstUnknownAt) {
-			return a.FirstUnknownAt.Before(b.FirstUnknownAt)
-		}
-		return a.ID < b.ID
-	})
+	exportable = sortQueueEntries(exportable)
 
 	if len(exportable) == 0 {
 		return "", nil
@@ -69,11 +64,24 @@ func flattenListText(s string) string {
 }
 
 // ClearAll wipes every durable queue entry. No-op when already empty.
-// Also drops ephemeral pass→entry bindings (entries no longer exist).
+// Also drops ephemeral pass→entry bindings under the same lock as first-tap
+// create/bind so concurrent mark-unknown cannot rebind a deleted entry.
 func (m *MiningApp) ClearAll() error {
-	if err := m.queue.ClearAll(); err != nil {
-		return err
-	}
-	m.passes.clear()
-	return nil
+	return m.passes.clearWith(func() error {
+		return m.queue.ClearAll()
+	})
+}
+
+// sortQueueEntries orders by FirstUnknownAt ascending, then ID ascending.
+func sortQueueEntries(list []ports.QueueEntry) []ports.QueueEntry {
+	out := make([]ports.QueueEntry, len(list))
+	copy(out, list)
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.FirstUnknownAt.Equal(b.FirstUnknownAt) {
+			return a.FirstUnknownAt.Before(b.FirstUnknownAt)
+		}
+		return a.ID < b.ID
+	})
+	return out
 }

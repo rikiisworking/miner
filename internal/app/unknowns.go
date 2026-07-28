@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/rikiisworking/miner/internal/ports"
@@ -41,7 +42,13 @@ func (m *MiningApp) AddUnknown(sentence, surface, entryID, passID string) (AddUn
 	passID = strings.TrimSpace(passID)
 
 	if entryID != "" {
-		return m.appendUnknown(entryID, surface)
+		res, err := m.appendUnknown(entryID, surface)
+		// After Clear all, Mine UI may still hold a stale entry_id via OOB swap.
+		// Prefer pass_id heal so multi-tab clear+mark does not 404 until re-analyze.
+		if err != nil && errors.Is(err, ErrEntryNotFound) && passID != "" {
+			return m.addUnknownForPass(sentence, surface, passID)
+		}
+		return res, err
 	}
 	if passID != "" {
 		return m.addUnknownForPass(sentence, surface, passID)
@@ -50,22 +57,32 @@ func (m *MiningApp) AddUnknown(sentence, surface, entryID, passID string) (AddUn
 }
 
 func (m *MiningApp) addUnknownForPass(sentence, surface, passID string) (AddUnknownResult, error) {
-	var createdRes AddUnknownResult
-	entryID, created, err := m.passes.lookupOrCreate(passID, func() (string, error) {
-		res, err := m.createEntryWithUnknown(sentence, surface)
+	// Retry: ClearAll can delete the entry after lookupOrCreate returns and
+	// before appendUnknown (append runs outside the registry lock).
+	for attempt := 0; attempt < 3; attempt++ {
+		var createdRes AddUnknownResult
+		entryID, created, err := m.passes.lookupOrCreate(passID, func() (string, error) {
+			res, err := m.createEntryWithUnknown(sentence, surface)
+			if err != nil {
+				return "", err
+			}
+			createdRes = res
+			return res.EntryID, nil
+		})
 		if err != nil {
-			return "", err
+			return AddUnknownResult{}, err
 		}
-		createdRes = res
-		return res.EntryID, nil
-	})
-	if err != nil {
-		return AddUnknownResult{}, err
+		if created {
+			return createdRes, nil
+		}
+		res, err := m.appendUnknown(entryID, surface)
+		if err != nil && errors.Is(err, ErrEntryNotFound) {
+			m.passes.drop(passID)
+			continue
+		}
+		return res, err
 	}
-	if created {
-		return createdRes, nil
-	}
-	return m.appendUnknown(entryID, surface)
+	return AddUnknownResult{}, ErrEntryNotFound
 }
 
 func (m *MiningApp) createEntryWithUnknown(sentence, surface string) (AddUnknownResult, error) {

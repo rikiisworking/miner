@@ -73,9 +73,8 @@ func NewTesseract(cfg TesseractConfig) (*Tesseract, error) {
 	if t.PSM == 0 {
 		t.PSM = DefaultTesseractPSM
 	}
-	if t.Timeout <= 0 {
-		t.Timeout = defaultOCRTimeout
-	}
+	// Timeout 0 means honor parent ctx only (product MaxIngestDuration owns the ceiling).
+	// Positive Timeout is an optional nested adapter safety bound.
 	bin, err := t.resolveBin()
 	if err != nil {
 		return nil, err
@@ -146,11 +145,6 @@ func (t *Tesseract) Recognize(ctx context.Context, image []byte) (string, error)
 	if psm == 0 {
 		psm = DefaultTesseractPSM
 	}
-	timeout := t.Timeout
-	if timeout <= 0 {
-		timeout = defaultOCRTimeout
-	}
-
 	ext := imageExt(image)
 	tmp, err := os.CreateTemp("", "miner-ocr-*"+ext)
 	if err != nil {
@@ -180,8 +174,16 @@ func (t *Tesseract) Recognize(ctx context.Context, image []byte) (string, error)
 		env = append(env, "TESSDATA_PREFIX="+t.TessdataPrefix)
 	}
 
-	// Nest adapter timeout under caller ctx (MiningApp MaxIngestDuration / HTTP cancel).
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	// Product MaxIngestDuration / HTTP cancel live on parent ctx.
+	// Optional positive Timeout nests a shorter adapter safety bound.
+	runCtx := ctx
+	cancel := func() {}
+	if t.Timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, t.Timeout)
+	} else if t.Timeout < 0 {
+		// Defensive: treat negative like legacy default safety.
+		runCtx, cancel = context.WithTimeout(ctx, defaultOCRTimeout)
+	}
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, bin, args...)

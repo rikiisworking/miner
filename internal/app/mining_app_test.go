@@ -9,6 +9,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/ocr"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
@@ -21,43 +22,17 @@ import (
 // Prefer ocr.Static over MustEngine so hosts without tesseract stay green.
 var defaultTestOCR = ocr.Static{Text: "私は本を読む。"}
 
-// fakeAnalyzer is a test double for ports.JapaneseAnalyzer.
-// Controllable tokens stay package-local; queue/pin use shared adapters.
-type fakeAnalyzer struct {
-	// byText maps exact sentence text to tokens. Explicit Content flags on tokens.
-	byText map[string][]ports.Token
-	// failWith, when set, makes every Analyze call fail.
-	failWith error
-	// failOn makes Analyze fail only for that exact text.
-	failOn string
-}
-
-func (f fakeAnalyzer) Analyze(text string) ([]ports.Token, error) {
-	if f.failWith != nil {
-		return nil, f.failWith
-	}
-	if f.failOn != "" && text == f.failOn {
-		return nil, errors.New("forced analyzer failure")
-	}
-	if f.byText != nil {
-		if toks, ok := f.byText[text]; ok {
-			return toks, nil
-		}
-	}
-	return []ports.Token{{Surface: text, Reading: "", Content: true}}, nil
-}
-
-func newApp(t *testing.T, analyzer ports.JapaneseAnalyzer) *app.MiningApp {
+func newApp(t *testing.T, ja ports.JapaneseAnalyzer) *app.MiningApp {
 	t.Helper()
-	return newAppWithQueue(t, analyzer, queuestore.NewMem())
+	return newAppWithQueue(t, ja, queuestore.NewMem())
 }
 
-func newAppWithQueue(t *testing.T, analyzer ports.JapaneseAnalyzer, queue ports.QueueStore) *app.MiningApp {
+func newAppWithQueue(t *testing.T, ja ports.JapaneseAnalyzer, queue ports.QueueStore) *app.MiningApp {
 	t.Helper()
-	if analyzer == nil {
-		analyzer = fakeAnalyzer{}
+	if ja == nil {
+		ja = analyzer.Stub{}
 	}
-	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue, defaultTestOCR)
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, ja, queue, defaultTestOCR)
 }
 
 // newAppWithOCR builds MiningApp with an explicit OcrEngine.
@@ -67,7 +42,7 @@ func newAppWithOCR(t *testing.T, o ports.OcrEngine) *app.MiningApp {
 	if o == nil {
 		o = ocr.MustEngine(t)
 	}
-	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, queuestore.NewMem(), o)
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer.Stub{}, queuestore.NewMem(), o)
 }
 
 func fixtureBytes(t *testing.T, id string) []byte {
@@ -120,7 +95,7 @@ func TestAnalyzeSentence_ReturnsTokensForFuriganaAndContentList(t *testing.T) {
 		{Surface: "読む", Reading: "よむ", Content: true},
 		{Surface: "。", Reading: "", Content: false},
 	}
-	m := newApp(t, fakeAnalyzer{byText: map[string][]ports.Token{sentence: tokens}})
+	m := newApp(t, analyzer.Stub{ByText: map[string][]ports.Token{sentence: tokens}})
 
 	got, err := m.AnalyzeSentence(sentence)
 	if err != nil {
@@ -161,7 +136,7 @@ func TestAnalyzeSentence_ContentWordFilter_OmitsParticlesAndFunction(t *testing.
 		{Surface: "た", Reading: "", Content: false},      // auxiliary
 		{Surface: "。", Reading: "", Content: false},      // punctuation
 	}
-	m := newApp(t, fakeAnalyzer{byText: map[string][]ports.Token{"病院に行った。": tokens}})
+	m := newApp(t, analyzer.Stub{ByText: map[string][]ports.Token{"病院に行った。": tokens}})
 
 	got, err := m.AnalyzeSentence("病院に行った。")
 	if err != nil {
@@ -185,7 +160,7 @@ func TestAnalyzeSentence_ContentWordFilter_OmitsParticlesAndFunction(t *testing.
 }
 
 func TestAnalyzeSentence_AnalyzerError_IsControlledFailure(t *testing.T) {
-	m := newApp(t, fakeAnalyzer{failWith: errors.New("engine down")})
+	m := newApp(t, analyzer.Stub{FailWith: errors.New("engine down")})
 
 	_, err := m.AnalyzeSentence("何か")
 	if err == nil {
@@ -197,7 +172,7 @@ func TestAnalyzeSentence_AnalyzerError_IsControlledFailure(t *testing.T) {
 }
 
 func TestAnalyzeSentence_EmptySentence(t *testing.T) {
-	m := newApp(t, fakeAnalyzer{})
+	m := newApp(t, analyzer.Stub{})
 
 	_, err := m.AnalyzeSentence("   ")
 	if !errors.Is(err, app.ErrEmptySentence) {
@@ -878,7 +853,7 @@ func TestIngestPage_DoesNotClearQueue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, q, ocr.Static{Text: "病院に行った。"})
+	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer.Stub{}, q, ocr.Static{Text: "病院に行った。"})
 	if _, err := m.IngestPage(context.Background(), []byte("img")); err != nil {
 		t.Fatal(err)
 	}
@@ -973,7 +948,7 @@ func TestIngestPage_CancelReleasesBusy(t *testing.T) {
 
 func TestNewMiningApp_RequiresPorts(t *testing.T) {
 	q := queuestore.NewMem()
-	a := fakeAnalyzer{}
+	a := analyzer.Stub{}
 	o := defaultTestOCR
 	p := pinauth.Static{Secret: "p"}
 
@@ -1103,7 +1078,7 @@ func (e errQueue) ClearAll() error {
 
 func TestListQueue_StoreError(t *testing.T) {
 	want := errors.New("list boom")
-	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{listErr: want}, defaultTestOCR)
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, analyzer.Stub{}, errQueue{listErr: want}, defaultTestOCR)
 	_, err := m.ListQueue()
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
@@ -1112,7 +1087,7 @@ func TestListQueue_StoreError(t *testing.T) {
 
 func TestAddUnknown_CreateError(t *testing.T) {
 	want := errors.New("create boom")
-	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{createErr: want}, defaultTestOCR)
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, analyzer.Stub{}, errQueue{createErr: want}, defaultTestOCR)
 	_, err := m.AddUnknown("私は本を読む。", "本", "", "")
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
@@ -1121,7 +1096,7 @@ func TestAddUnknown_CreateError(t *testing.T) {
 
 func TestExportMarkdown_StoreError(t *testing.T) {
 	want := errors.New("list boom")
-	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{listErr: want}, defaultTestOCR)
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, analyzer.Stub{}, errQueue{listErr: want}, defaultTestOCR)
 	_, err := m.ExportMarkdown()
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
@@ -1130,8 +1105,170 @@ func TestExportMarkdown_StoreError(t *testing.T) {
 
 func TestClearAll_StoreError(t *testing.T) {
 	want := errors.New("clear boom")
-	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, fakeAnalyzer{}, errQueue{clearErr: want}, defaultTestOCR)
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, analyzer.Stub{}, errQueue{clearErr: want}, defaultTestOCR)
 	if err := m.ClearAll(); !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func TestAddUnknown_AppendStoreError_Propagates(t *testing.T) {
+	want := errors.New("append boom")
+	m := app.NewMiningApp(pinauth.Static{Secret: "p"}, analyzer.Stub{}, errQueue{appendErr: want}, defaultTestOCR)
+	_, err := m.AddUnknown("私は本を読む。", "本", "some-id", "")
+	if !errors.Is(err, want) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAddUnknown_StaleEntryID_HealsViaPass(t *testing.T) {
+	m := newApp(t, nil)
+	analysis, err := m.AnalyzeSentence("私は本を読む。")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.AddUnknown("私は本を読む。", "本", "", analysis.PassID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ClearAll(); err != nil {
+		t.Fatal(err)
+	}
+	// Stale entry_id from OOB + still-held pass_id (new analyze not required if pass reused after clear).
+	// After clear, pass bind is gone; pass_id creates a new entry instead of 404.
+	got, err := m.AddUnknown("私は本を読む。", "私", first.EntryID, analysis.PassID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EntryID == first.EntryID {
+		t.Fatalf("healed onto deleted entry %q", got.EntryID)
+	}
+	if !got.Created {
+		t.Fatalf("want create after heal: %+v", got)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != got.EntryID {
+		t.Fatalf("list=%+v", list)
+	}
+}
+
+func TestClearAll_ConcurrentWithSamePassFirstTap(t *testing.T) {
+	// Concurrent clear + first-tap must not leave pass bound to a deleted entry.
+	m := newApp(t, nil)
+	analysis, err := m.AnalyzeSentence("私は本を読む。")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := analysis.PassID
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 32)
+	for i := 0; i < 16; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := m.AddUnknown("私は本を読む。", "本", "", pass)
+			if err != nil {
+				errCh <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := m.ClearAll(); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// After quiesce, one more mark with same pass must create a consistent entry
+	// (pass map empty or pointing at a live entry — not a deleted ID).
+	res, err := m.AddUnknown("私は本を読む。", "私", "", pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range list {
+		if e.ID == res.EntryID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("result entry %q missing from list %+v", res.EntryID, list)
+	}
+}
+
+func TestListQueue_OrderMatchesExport(t *testing.T) {
+	q := queuestore.NewMem()
+	m := newAppWithQueue(t, nil, q)
+	t0 := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(-time.Hour)
+	// Insert later-first so store order ≠ product order.
+	if err := q.Create(ports.QueueEntry{
+		ID: "b", Sentence: "後", Unknowns: []string{"後"}, FirstUnknownAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Create(ports.QueueEntry{
+		ID: "a", Sentence: "先", Unknowns: []string{"先"}, FirstUnknownAt: t1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != "a" || list[1].ID != "b" {
+		t.Fatalf("ListQueue order=%+v", list)
+	}
+	md, err := m.ExportMarkdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(md, "- 先\n") {
+		t.Fatalf("export should lead with earlier entry: %q", md)
+	}
+}
+
+func TestIngestPage_DeadlineExceeded_IsCanceled(t *testing.T) {
+	// Parent ctx deadline fires before slow OCR finishes → ErrIngestCanceled; busy free.
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine := &slowOCR{started: started, release: release, text: "私は本を読む。"}
+	m := newAppWithOCR(t, engine)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := m.IngestPage(ctx, []byte("img"))
+		errCh <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OCR never started")
+	}
+	err := <-errCh
+	if !errors.Is(err, app.ErrIngestCanceled) {
+		t.Fatalf("got %v want ErrIngestCanceled", err)
+	}
+	if m.IngestBusy() {
+		t.Fatal("busy stuck after deadline cancel")
+	}
+	close(release)
 }

@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,9 +26,12 @@ import (
 	"github.com/rikiisworking/miner/web"
 )
 
+// defaultTestOCR keeps non-OCR L2 tests free of a host tesseract install.
+var defaultTestOCR = ocr.Static{Text: "病院に行った。\n私は本を読む。"}
+
 func newTestServer(t *testing.T) *httpapi.Server {
 	t.Helper()
-	return newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), ocr.MustEngine(t))
+	return newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), defaultTestOCR)
 }
 
 func newTestServerWith(t *testing.T, a ports.JapaneseAnalyzer, q ports.QueueStore, o ports.OcrEngine) *httpapi.Server {
@@ -34,7 +40,7 @@ func newTestServerWith(t *testing.T, a ports.JapaneseAnalyzer, q ports.QueueStor
 		q = queuestore.NewMem()
 	}
 	if o == nil {
-		o = ocr.MustEngine(t)
+		o = defaultTestOCR
 	}
 	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, a, q, o)
 	s, err := httpapi.New(httpapi.Config{
@@ -562,7 +568,7 @@ func TestAddUnknown_Authenticated_QueueListReflectsEntry(t *testing.T) {
 // Same pass_id with empty entry_id must bind both posts to one queue entry (transport proof of Pass protocol).
 func TestAddUnknown_SamePassID_EmptyEntryID_OneEntry(t *testing.T) {
 	q := queuestore.NewMem()
-	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
+	s := newTestServerWith(t, analyzer.Stub{}, q, defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
 	post := func(surface, passID string) string {
@@ -612,7 +618,7 @@ func TestAddUnknown_SamePassID_EmptyEntryID_OneEntry(t *testing.T) {
 
 func TestAddUnknown_Duplicate_IdempotentOneUnknown(t *testing.T) {
 	q := queuestore.NewMem()
-	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
+	s := newTestServerWith(t, analyzer.Stub{}, q, defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
 	post := func(entryID string) string {
@@ -746,7 +752,7 @@ func TestExport_Authenticated_MarkdownUTF8_QueueUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
+	s := newTestServerWith(t, analyzer.Stub{}, q, defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
 	before, err := q.List()
@@ -838,7 +844,7 @@ func TestExport_Unauthenticated_Rejected(t *testing.T) {
 
 func TestClearAll_EmptiesQueue_SecondClearSafe(t *testing.T) {
 	q := queuestore.NewMem()
-	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
+	s := newTestServerWith(t, analyzer.Stub{}, q, defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
 	form := url.Values{"sentence": {"今日は雨だ。"}, "surface": {"雨"}}
@@ -920,7 +926,7 @@ func TestQueuePage_ShowsExportAndClearControls(t *testing.T) {
 // Ensure file-backed store works end-to-end through HTTP (optional smoke).
 func TestAddUnknown_FileStore_Persists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.json")
-	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewFile(path), ocr.MustEngine(t))
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewFile(path), defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
 	form := url.Values{
@@ -968,7 +974,40 @@ func multipartIngest(t *testing.T, filename string, image []byte) *http.Request 
 	return req
 }
 
+func TestIngest_Authenticated_StaticEngine_ReturnsCandidates(t *testing.T) {
+	// Transport + MiningApp candidate path without host tesseract.
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), defaultTestOCR)
+	cookies := unlockCookies(t, s)
+
+	req := multipartIngest(t, "page.png", []byte("fake-image-bytes"))
+	for _, ck := range cookies {
+		req.AddCookie(ck)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(html, `data-testid="sentence-candidates"`) {
+		t.Fatalf("missing candidates: %s", html)
+	}
+	if strings.Count(html, `data-testid="sentence-candidate"`) < 2 {
+		t.Fatalf("want ≥2 candidates: %s", html)
+	}
+	if !strings.Contains(html, "病院に行った") || !strings.Contains(html, "私は本を読む") {
+		t.Fatalf("missing sentence text: %s", html)
+	}
+}
+
 func TestIngest_Authenticated_TinyFixture_ReturnsCandidates(t *testing.T) {
+	// Real tesseract path — host install required (MustEngine fatals if missing).
 	manifest, err := ocrtest.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -1031,7 +1070,7 @@ func TestIngest_Oversize_ClearError(t *testing.T) {
 	for i := range img {
 		img[i] = byte(i % 251)
 	}
-	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), ocr.MustEngine(t))
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
 	req := multipartIngest(t, "big.png", img)
@@ -1069,18 +1108,11 @@ func TestIngest_OCRFailure_QueueIntact(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
+	// Fail via test double — no host tesseract required.
+	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.Static{Err: errors.New("ocr boom")})
 	cookies := unlockCookies(t, s)
 
-	manifest, err := ocrtest.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bad, err := manifest.Must("19_not_an_image").Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := multipartIngest(t, "page.bin", bad)
+	req := multipartIngest(t, "page.bin", []byte("not-an-image"))
 	for _, ck := range cookies {
 		req.AddCookie(ck)
 	}
@@ -1093,7 +1125,7 @@ func TestIngest_OCRFailure_QueueIntact(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
 
-	// Real engine fails on non-image → 422 OCR error (not 200 candidates).
+	// Engine error → 422 OCR error partial (not 200 candidates).
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d want 422 body=%s", resp.StatusCode, html)
 	}
@@ -1154,5 +1186,192 @@ func TestHome_ShowsPhotoUploadSection(t *testing.T) {
 	}
 	if !strings.Contains(html, `hx-encoding="multipart/form-data"`) {
 		t.Fatalf("photo form needs multipart encoding: %s", html)
+	}
+}
+
+func TestIngest_Busy_Conflict409(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine := &slowHTTPORC{started: started, release: release, text: "私は本を読む。"}
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), engine)
+	cookies := unlockCookies(t, s)
+
+	errCh := make(chan int, 1)
+	go func() {
+		req := multipartIngest(t, "a.png", []byte("img-a"))
+		for _, ck := range cookies {
+			req.AddCookie(ck)
+		}
+		resp, err := s.App().Test(req, -1)
+		if err != nil {
+			errCh <- -1
+			return
+		}
+		defer resp.Body.Close()
+		errCh <- resp.StatusCode
+	}()
+	<-started
+
+	req2 := multipartIngest(t, "b.png", []byte("img-b"))
+	for _, ck := range cookies {
+		req2.AddCookie(ck)
+	}
+	resp2, err := s.App().Test(req2, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", resp2.StatusCode, body)
+	}
+	close(release)
+	if code := <-errCh; code != http.StatusOK && code != -1 {
+		// first may succeed after release
+		if code != http.StatusOK {
+			t.Logf("first ingest status=%d", code)
+		}
+	}
+}
+
+type slowHTTPORC struct {
+	started chan struct{}
+	release chan struct{}
+	text    string
+	once    sync.Once
+}
+
+func (s *slowHTTPORC) Recognize(ctx context.Context, image []byte) (string, error) {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return s.text, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func TestIngest_MissingImageField_BadRequest(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodPost, "/ingest", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, ck := range cookies {
+		req.AddCookie(ck)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Choose an image") && !strings.Contains(string(body), "image") {
+		t.Fatalf("body=%s", body)
+	}
+}
+
+func TestIngest_EmptyOCRText_BadRequest(t *testing.T) {
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), ocr.Static{Text: "   "})
+	cookies := unlockCookies(t, s)
+	req := multipartIngest(t, "blank.png", []byte("x"))
+	for _, ck := range cookies {
+		req.AddCookie(ck)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "No text found") {
+		t.Fatalf("body=%s", body)
+	}
+}
+
+func TestAddUnknown_EmptySurface_BadRequest(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	body := "sentence=" + url.QueryEscape("私は本を読む。") + "&surface=&pass_id=p1"
+	req := httptest.NewRequest(http.MethodPost, "/unknowns", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, b)
+	}
+}
+
+func TestAddUnknown_MissingEntry_NotFound(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	body := "sentence=" + url.QueryEscape("私は本を読む。") +
+		"&surface=" + url.QueryEscape("本") +
+		"&entry_id=no-such-entry"
+	req := httptest.NewRequest(http.MethodPost, "/unknowns", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, b)
+	}
+}
+
+func TestAnalyze_EmptySentence_BadRequest(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodPost, "/analyze", strings.NewReader("sentence="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, b)
+	}
+}
+
+func TestIndex_WithSession_ShowsShell(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), `data-testid="app-shell"`) {
+		t.Fatalf("expected shell: %s", body)
 	}
 }

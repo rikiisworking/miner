@@ -11,15 +11,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
-
-	"github.com/rikiisworking/miner/internal/app"
 )
 
-// MaxUploadBytes re-exports the product cap so fixture tests assert against the
-// same number MiningApp.IngestPage and HTTP BodyLimit use. Do not redefine.
-const MaxUploadBytes = app.MaxUploadBytes
-
 // Case is one row from testdata/ocr/cases.json.
+// Unknown JSON fields (e.g. notes) are ignored.
 type Case struct {
 	ID           string   `json:"id"`
 	File         string   `json:"file"` // relative to testdata/ocr
@@ -27,7 +22,6 @@ type Case struct {
 	WantSuccess  bool     `json:"want_success"`
 	MinOverlap   *float64 `json:"min_overlap"`
 	Tags         []string `json:"tags"`
-	Notes        string   `json:"notes"`
 
 	root string // absolute testdata/ocr dir
 }
@@ -53,9 +47,8 @@ func (c Case) HasTag(tag string) bool {
 }
 
 // Manifest is the full cases.json document.
+// Version/description may appear in JSON but are not required by Go readers.
 type Manifest struct {
-	Version        int    `json:"version"`
-	Description    string `json:"description"`
 	MaxUploadBytes int    `json:"max_upload_bytes"`
 	Cases          []Case `json:"cases"`
 }

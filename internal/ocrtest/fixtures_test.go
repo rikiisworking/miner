@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/ocrtest"
 )
 
@@ -16,8 +17,8 @@ func TestManifestHasAtLeastTenCasesWithFiles(t *testing.T) {
 	if len(m.Cases) < 10 {
 		t.Fatalf("want >= 10 OCR cases, got %d", len(m.Cases))
 	}
-	if m.MaxUploadBytes != ocrtest.MaxUploadBytes {
-		t.Fatalf("manifest max_upload_bytes=%d, package const=%d", m.MaxUploadBytes, ocrtest.MaxUploadBytes)
+	if m.MaxUploadBytes != app.MaxUploadBytes {
+		t.Fatalf("manifest max_upload_bytes=%d, app.MaxUploadBytes=%d", m.MaxUploadBytes, app.MaxUploadBytes)
 	}
 
 	seen := map[string]bool{}
@@ -45,7 +46,7 @@ func TestManifestHasAtLeastTenCasesWithFiles(t *testing.T) {
 			t.Fatalf("%s: empty file %s", c.ID, p)
 		}
 		// Product rule: fixtures themselves stay under upload cap (oversize is in-test buffer).
-		if len(b) > ocrtest.MaxUploadBytes {
+		if len(b) > app.MaxUploadBytes {
 			t.Fatalf("%s: fixture %d bytes exceeds MaxUploadBytes; generate oversize in test code", c.ID, len(b))
 		}
 	}

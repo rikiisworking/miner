@@ -53,13 +53,4 @@ func SplitSentences(text string) []string {
 	return out
 }
 
-// ProposeSentences is the MiningApp facade for page-text segmentation (paste path).
-// Does not write the durable queue or open analyze passes.
-// Empty / whitespace-only page text returns ErrEmptyPage so HTTP stays a pure mapper.
-func (m *MiningApp) ProposeSentences(pageText string) ([]string, error) {
-	cands := SplitSentences(pageText)
-	if len(cands) == 0 {
-		return nil, ErrEmptyPage
-	}
-	return cands, nil
-}
+

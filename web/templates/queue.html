@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Queue · miner</title>
-  <script src="/static/htmx.min.js"></script>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
     body { margin: 0; padding: 1rem; max-width: 32rem; margin-inline: auto; line-height: 1.4; }
@@ -27,8 +26,7 @@
     .actions button.clear {
       background: transparent; color: inherit; border: 1px solid #8886;
     }
-    .actions button.clear:disabled,
-    .actions a.export[aria-disabled="true"] {
+    .actions button.clear:disabled {
       opacity: 0.45; cursor: not-allowed; pointer-events: none;
     }
     .entry {

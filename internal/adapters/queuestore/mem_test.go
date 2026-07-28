@@ -21,17 +21,17 @@ func TestMem_CreateListAppendClear(t *testing.T) {
 		t.Fatalf("list=%+v err=%v", list, err)
 	}
 
-	e, added, found, err := m.AppendUnknown("e1", "B")
-	if err != nil || !found || !added || len(e.Unknowns) != 2 {
-		t.Fatalf("append B: entry=%+v added=%v found=%v err=%v", e, added, found, err)
+	res, err := m.AppendUnknown("e1", "B")
+	if err != nil || !res.Found || !res.Added || len(res.Entry.Unknowns) != 2 {
+		t.Fatalf("append B: %+v err=%v", res, err)
 	}
-	e, added, found, err = m.AppendUnknown("e1", "B")
-	if err != nil || !found || added {
-		t.Fatalf("dup B: added=%v found=%v err=%v", added, found, err)
+	res, err = m.AppendUnknown("e1", "B")
+	if err != nil || !res.Found || res.Added {
+		t.Fatalf("dup B: %+v err=%v", res, err)
 	}
-	_, _, found, err = m.AppendUnknown("missing", "X")
-	if err != nil || found {
-		t.Fatalf("missing: found=%v err=%v", found, err)
+	res, err = m.AppendUnknown("missing", "X")
+	if err != nil || res.Found {
+		t.Fatalf("missing: %+v err=%v", res, err)
 	}
 
 	if err := m.ClearAll(); err != nil {

@@ -75,25 +75,25 @@ func TestFile_AppendUnknown_AtomicAndDedupe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, added, found, err := store.AppendUnknown("e1", "B")
-	if err != nil || !found || !added {
-		t.Fatalf("append B: added=%v found=%v err=%v", added, found, err)
+	res, err := store.AppendUnknown("e1", "B")
+	if err != nil || !res.Found || !res.Added {
+		t.Fatalf("append B: %+v err=%v", res, err)
 	}
-	if len(e.Unknowns) != 2 {
-		t.Fatalf("unknowns=%v", e.Unknowns)
-	}
-
-	e, added, found, err = store.AppendUnknown("e1", "B")
-	if err != nil || !found || added {
-		t.Fatalf("dup B: added=%v found=%v err=%v", added, found, err)
-	}
-	if len(e.Unknowns) != 2 {
-		t.Fatalf("dup changed unknowns: %v", e.Unknowns)
+	if len(res.Entry.Unknowns) != 2 {
+		t.Fatalf("unknowns=%v", res.Entry.Unknowns)
 	}
 
-	_, _, found, err = store.AppendUnknown("missing", "X")
-	if err != nil || found {
-		t.Fatalf("missing: found=%v err=%v", found, err)
+	res, err = store.AppendUnknown("e1", "B")
+	if err != nil || !res.Found || res.Added {
+		t.Fatalf("dup B: %+v err=%v", res, err)
+	}
+	if len(res.Entry.Unknowns) != 2 {
+		t.Fatalf("dup changed unknowns: %v", res.Entry.Unknowns)
+	}
+
+	res, err = store.AppendUnknown("missing", "X")
+	if err != nil || res.Found {
+		t.Fatalf("missing: %+v err=%v", res, err)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestFile_CreateRejectsEmptyAndDuplicateID(t *testing.T) {
 func TestFile_AppendUnknown_EmptyID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.json")
 	store := queuestore.NewFile(path)
-	_, _, _, err := store.AppendUnknown("", "x")
+	_, err := store.AppendUnknown("", "x")
 	if err == nil {
 		t.Fatal("expected empty id error")
 	}
@@ -168,5 +168,17 @@ func TestFile_LoadEmptyFile(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("empty file list=%+v", list)
+	}
+}
+
+func TestFile_LoadCorruptJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := queuestore.NewFile(path)
+	_, err := store.List()
+	if err == nil {
+		t.Fatal("expected decode error")
 	}
 }

@@ -19,10 +19,20 @@ import (
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
 	"github.com/rikiisworking/miner/internal/ocrtest"
+	"github.com/rikiisworking/miner/internal/ports"
 	"github.com/rikiisworking/miner/web"
 )
 
+// defaultE2EOCR: multi-sentence text so photo + page-text journeys work without
+// host tesseract. Real CLI only where a test calls startServerWith + MustEngine.
+var defaultE2EOCR ports.OcrEngine = ocr.Static{Text: "病院に行った。\n私は本を読む。"}
+
 func startServer(t *testing.T) (baseURL string, shutdown func()) {
+	t.Helper()
+	return startServerWith(t, defaultE2EOCR)
+}
+
+func startServerWith(t *testing.T, eng ports.OcrEngine) (baseURL string, shutdown func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -33,7 +43,7 @@ func startServer(t *testing.T) (baseURL string, shutdown func()) {
 		pinauth.Static{Secret: "test-pin-ok"},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
-		ocr.MustEngine(t),
+		eng,
 	)
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
@@ -653,7 +663,7 @@ func fixtureImagePath(t *testing.T, caseID string) string {
 }
 
 func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
-	// Real tesseract on multi-sentence fixture image.
+	// Static OCR returns multi-sentence text for any upload (no host tesseract).
 	base, shutdown := startServer(t)
 	t.Cleanup(shutdown)
 	imgPath := fixtureImagePath(t, "02_multi_sentence")
@@ -783,8 +793,8 @@ func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
 }
 
 func TestUI_PhotoIngest_OCRFail_ErrorVisible_QueueUnchanged(t *testing.T) {
-	// Non-image fixture forces real engine failure; queue stays empty.
-	base, shutdown := startServer(t)
+	// Fail via test double; queue stays empty. (Real CLI fail covered in L1/L2 with MustEngine.)
+	base, shutdown := startServerWith(t, ocr.Static{Err: fmt.Errorf("ocr boom")})
 	t.Cleanup(shutdown)
 	imgPath := fixtureImagePath(t, "19_not_an_image")
 

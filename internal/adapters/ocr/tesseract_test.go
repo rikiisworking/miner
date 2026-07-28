@@ -1,6 +1,7 @@
 package ocr_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,7 +17,7 @@ func TestTesseract_EmptyImage(t *testing.T) {
 	if err != nil {
 		t.Skip(err.Error())
 	}
-	_, err = eng.Recognize(nil)
+	_, err = eng.Recognize(context.Background(), nil)
 	if !errors.Is(err, ocr.ErrEmptyImage) {
 		t.Fatalf("got %v want ErrEmptyImage", err)
 	}
@@ -45,7 +46,7 @@ func TestTesseract_SmokeSingleSentence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := eng.Recognize(img)
+	text, err := eng.Recognize(context.Background(), img)
 	if err != nil {
 		t.Fatalf("Recognize: %v", err)
 	}
@@ -68,7 +69,7 @@ func TestTesseract_SmokeMultiSentence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := eng.Recognize(img)
+	text, err := eng.Recognize(context.Background(), img)
 	if err != nil {
 		t.Fatalf("Recognize: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestTesseract_NotAnImageFailsOrEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := eng.Recognize(img)
+	text, err := eng.Recognize(context.Background(), img)
 	// Engine may error (preferred) or return empty/garbage; product IngestPage
 	// treats empty as ErrEmptyPage and errors as ErrOcrFailed.
 	if err != nil {
@@ -173,7 +174,7 @@ func TestTesseractContract_StressSuites(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					got, err := eng.Recognize(img)
+					got, err := eng.Recognize(context.Background(), img)
 					if err != nil {
 						if contractSoftIDs[c.ID] || !c.WantSuccess {
 							t.Logf("soft: Recognize error (tolerated): %v", err)
@@ -236,7 +237,7 @@ func TestTesseractContract_HappyPathOverlap(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := eng.Recognize(img)
+			got, err := eng.Recognize(context.Background(), img)
 			if err != nil {
 				t.Fatalf("Recognize: %v", err)
 			}

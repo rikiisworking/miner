@@ -15,7 +15,7 @@ func (s *Server) handleIndex(c *fiber.Ctx) error {
 		return err
 	}
 	if ok {
-		return s.render(c, "shell", nil)
+		return s.render(c, "home", nil)
 	}
 	return s.render(c, "pin", map[string]any{"Error": ""})
 }
@@ -51,11 +51,15 @@ func (s *Server) handleUnlock(c *fiber.Ctx) error {
 		return err
 	}
 
-	return s.render(c, "shell", nil)
+	return s.render(c, "home", nil)
 }
 
 func (s *Server) handleHome(c *fiber.Ctx) error {
-	return s.render(c, "shell", nil)
+	return s.render(c, "home", nil)
+}
+
+func (s *Server) handleCapture(c *fiber.Ctx) error {
+	return s.render(c, "capture", nil)
 }
 
 func (s *Server) requireAuth(c *fiber.Ctx) error {
@@ -67,13 +71,16 @@ func (s *Server) requireAuth(c *fiber.Ctx) error {
 		// HTMX: generic error fragment only — never a feature partial (analyze/queue/…).
 		if c.Get("HX-Request") == "true" {
 			c.Status(fiber.StatusUnauthorized)
-			return s.renderHTMXError(c, fiber.StatusUnauthorized, "Session required. Enter PIN.")
+			return s.renderHTMXError(c, fiber.StatusUnauthorized, msgSessionRequired)
+		}
+		if wantsJSON(c) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": msgSessionRequired})
 		}
 		accept := c.Get("Accept")
 		if accept == "" || strings.Contains(accept, "text/html") {
 			c.Status(fiber.StatusUnauthorized)
 			return s.render(c, "pin", map[string]any{
-				"Error": "Session required. Enter PIN.",
+				"Error": msgSessionRequired,
 			})
 		}
 		return c.SendStatus(fiber.StatusUnauthorized)

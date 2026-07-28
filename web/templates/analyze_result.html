@@ -2,12 +2,6 @@
 {{if .Error}}
 <div class="error" data-testid="analyze-error" role="alert">{{.Error}}</div>
 {{else}}
-{{/* Keep working-sentence box in sync after candidate pick or re-analyze. */}}
-<textarea id="sentence" name="sentence" lang="ja"
-          data-testid="sentence-input"
-          placeholder="Paste or type a sentence…"
-          required
-          hx-swap-oob="true">{{.Sentence}}</textarea>
 <div data-testid="analyze-success" id="analyze-success">
   <p class="furigana" data-testid="furigana-sentence" lang="ja">
     {{- range .Tokens -}}

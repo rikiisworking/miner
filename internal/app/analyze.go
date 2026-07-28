@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/rikiisworking/miner/internal/ports"
 )
@@ -48,14 +49,30 @@ func (m *MiningApp) AnalyzeSentence(text string) (SentenceAnalysis, error) {
 	}, nil
 }
 
-// filterContentWords keeps content tokens with a non-empty surface.
-// Baseline product rule is encoded on Token.Content by the analyzer (or test fake).
+// filterContentWords keeps content tokens that are worth mining as unknowns.
+// Rules:
+//   - Token.Content must be true (analyzer / test fake)
+//   - non-empty surface
+//   - surface must contain at least one kanji (Han script)
+//
+// Pure kana (hiragana/katakana) content tokens are omitted from the vocab list.
+// Furigana still uses the full Tokens stream.
 func filterContentWords(tokens []ports.Token) []ports.Token {
 	out := make([]ports.Token, 0, len(tokens))
 	for _, t := range tokens {
-		if t.Content && t.Surface != "" {
+		if t.Content && t.Surface != "" && containsKanji(t.Surface) {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// containsKanji reports whether s has at least one Han ideograph.
+func containsKanji(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }

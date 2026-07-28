@@ -15,8 +15,8 @@ func TestStatic_ReturnsText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "病院に行った。" {
-		t.Fatalf("got %q", got)
+	if got.Text != "病院に行った。" {
+		t.Fatalf("got %q", got.Text)
 	}
 }
 

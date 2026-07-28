@@ -113,7 +113,7 @@ def _load_engine(src: Path):
     }
 
 
-def _recognize(engine, image_path: str) -> str:
+def _recognize(engine, image_path: str) -> dict:
     from PIL import Image
     import numpy as np
 
@@ -153,7 +153,30 @@ def _recognize(engine, image_path: str) -> str:
     text = result.get("text") or ""
     if not isinstance(text, str):
         text = str(text)
-    return text.strip()
+
+    lines = []
+    for ln in result.get("text_layer_lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        t = ln.get("text") or ""
+        if not isinstance(t, str):
+            t = str(t)
+        lines.append(
+            {
+                "text": t,
+                "x": int(ln.get("x") or 0),
+                "y": int(ln.get("y") or 0),
+                "w": int(ln.get("width") or 0),
+                "h": int(ln.get("height") or 0),
+            }
+        )
+
+    return {
+        "text": text.strip(),
+        "lines": lines,
+        "img_width": int(result.get("img_width") or img.shape[1]),
+        "img_height": int(result.get("img_height") or img.shape[0]),
+    }
 
 
 def _emit(obj: dict) -> None:
@@ -187,8 +210,17 @@ def main() -> int:
             if not image_path or not isinstance(image_path, str):
                 _emit({"id": req_id, "ok": False, "error": "image_path required"})
                 continue
-            text = _recognize(engine, image_path)
-            _emit({"id": req_id, "ok": True, "text": text})
+            out = _recognize(engine, image_path)
+            _emit(
+                {
+                    "id": req_id,
+                    "ok": True,
+                    "text": out["text"],
+                    "lines": out["lines"],
+                    "img_width": out["img_width"],
+                    "img_height": out["img_height"],
+                }
+            )
         except Exception as exc:  # noqa: BLE001 — per-request isolation
             _emit(
                 {

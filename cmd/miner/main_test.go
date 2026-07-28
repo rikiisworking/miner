@@ -12,16 +12,17 @@ func TestResolveWebFS_Embed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Embedded assets must expose templates used by httpapi.
-	f, err := fsys.Open("templates/shell.html")
-	if err != nil {
-		t.Fatalf("open shell: %v", err)
+	for _, path := range []string{
+		"templates/home.html",
+		"templates/capture.html",
+		"static/camera.js",
+	} {
+		f, err := fsys.Open(path)
+		if err != nil {
+			t.Fatalf("open %s: %v", path, err)
+		}
+		_ = f.Close()
 	}
-	_ = f.Close()
-	f2, err := fsys.Open("static/camera.js")
-	if err != nil {
-		t.Fatalf("open camera.js: %v", err)
-	}
-	_ = f2.Close()
 }
 
 func TestResolveWebFS_DiskOverride(t *testing.T) {

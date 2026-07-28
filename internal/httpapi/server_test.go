@@ -3,7 +3,9 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -104,8 +106,8 @@ func TestUnlock_WrongPIN_Unauthorized(t *testing.T) {
 	if !strings.Contains(string(body), "Incorrect PIN") {
 		t.Fatalf("body missing error: %s", body)
 	}
-	if strings.Contains(string(body), `data-testid="app-shell"`) {
-		t.Fatal("mining shell must not appear on wrong PIN")
+	if strings.Contains(string(body), `data-testid="app-home"`) {
+		t.Fatal("home must not appear on wrong PIN")
 	}
 }
 
@@ -125,11 +127,11 @@ func TestUnlock_CorrectPIN_SetsSessionCookieAndShell(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), `data-testid="app-shell"`) {
-		t.Fatalf("expected app shell: %s", body)
+	if !strings.Contains(string(body), `data-testid="app-home"`) {
+		t.Fatalf("expected home: %s", body)
 	}
-	if !strings.Contains(string(body), `data-testid="sentence-input"`) {
-		t.Fatalf("expected analyze form on shell: %s", body)
+	if !strings.Contains(string(body), `data-testid="take-photo"`) {
+		t.Fatalf("expected Take photo on home: %s", body)
 	}
 
 	setCookie := resp.Header.Values("Set-Cookie")
@@ -167,8 +169,8 @@ func TestUnlock_CorrectPIN_SetsSessionCookieAndShell(t *testing.T) {
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("/home status=%d body=%s", resp2.StatusCode, body2)
 	}
-	if !strings.Contains(string(body2), `data-testid="app-shell"`) {
-		t.Fatalf("/home missing shell: %s", body2)
+	if !strings.Contains(string(body2), `data-testid="app-home"`) {
+		t.Fatalf("/home missing home: %s", body2)
 	}
 }
 
@@ -442,13 +444,12 @@ func TestPageText_ThenAnalyze_SelectCandidateOverHTTP(t *testing.T) {
 	if !strings.Contains(html, `data-surface="本"`) {
 		t.Fatalf("expected content for selected sentence: %s", html)
 	}
-	// OOB working-sentence textarea updated
-	if !strings.Contains(html, `hx-swap-oob="true"`) || !strings.Contains(html, "私は本を読む。") {
-		t.Fatalf("expected OOB sentence sync: %s", html)
+	if !strings.Contains(html, "私は本を読む") {
+		t.Fatalf("expected furigana/tokens for selected sentence: %s", html)
 	}
 }
 
-func TestHome_ShowsPageTextSection(t *testing.T) {
+func TestHome_NoPageTextOrManualSentence(t *testing.T) {
 	s := newTestServer(t)
 	cookies := unlockCookies(t, s)
 	req := httptest.NewRequest(http.MethodGet, "/home", nil)
@@ -462,11 +463,11 @@ func TestHome_ShowsPageTextSection(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
-	if !strings.Contains(html, `data-testid="page-text-section"`) {
-		t.Fatalf("missing page-text-section: %s", html)
+	if strings.Contains(html, `data-testid="page-text-section"`) {
+		t.Fatal("page-text section must not appear on home")
 	}
-	if !strings.Contains(html, `data-testid="page-text-input"`) {
-		t.Fatalf("missing page-text-input: %s", html)
+	if strings.Contains(html, `data-testid="sentence-input"`) {
+		t.Fatal("manual sentence input must not appear on home")
 	}
 }
 
@@ -545,8 +546,8 @@ func TestAnalyze_Failure_ClearError(t *testing.T) {
 	if !strings.Contains(html, `data-testid="analyze-error"`) {
 		t.Fatalf("missing analyze-error: %s", html)
 	}
-	if !strings.Contains(html, "could not be tokenized") {
-		t.Fatalf("expected clear error message: %s", html)
+	if !strings.Contains(html, "Could not analyze this sentence. Go back and pick another.") {
+		t.Fatalf("expected exact analyze error copy: %s", html)
 	}
 	if strings.Contains(html, `data-testid="analyze-success"`) {
 		t.Fatal("success fragment must not appear on analyze failure")
@@ -1005,6 +1006,7 @@ func TestAddUnknown_FileStore_Persists(t *testing.T) {
 }
 
 // multipartIngest builds a POST /ingest body with one file field "image".
+// Capture UI always uses Accept: application/json.
 func multipartIngest(t *testing.T, filename string, image []byte) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
@@ -1021,7 +1023,17 @@ func multipartIngest(t *testing.T, filename string, image []byte) *http.Request 
 	}
 	req := httptest.NewRequest(http.MethodPost, "/ingest", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
 	return req
+}
+
+func decodeIngestJSON(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("json: %v body=%s", err, body)
+	}
+	return m
 }
 
 func TestIngest_Authenticated_StaticEngine_ReturnsCandidates(t *testing.T) {
@@ -1040,19 +1052,18 @@ func TestIngest_Authenticated_StaticEngine_ReturnsCandidates(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	html := string(body)
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, html)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(html, `data-testid="sentence-candidates"`) {
-		t.Fatalf("missing candidates: %s", html)
+	m := decodeIngestJSON(t, body)
+	cands, _ := m["candidates"].([]any)
+	if len(cands) < 2 {
+		t.Fatalf("want ≥2 candidates: %s", body)
 	}
-	if strings.Count(html, `data-testid="sentence-candidate"`) < 2 {
-		t.Fatalf("want ≥2 candidates: %s", html)
-	}
-	if !strings.Contains(html, "病院に行った") || !strings.Contains(html, "私は本を読む") {
-		t.Fatalf("missing sentence text: %s", html)
+	joined := fmt.Sprint(cands)
+	if !strings.Contains(joined, "病院に行った") || !strings.Contains(joined, "私は本を読む") {
+		t.Fatalf("missing sentence text: %s", body)
 	}
 }
 
@@ -1081,21 +1092,18 @@ func TestIngest_Authenticated_TinyFixture_ReturnsCandidates(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	html := string(body)
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, html)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(html, `data-testid="sentence-candidates"`) {
-		t.Fatalf("missing candidates: %s", html)
+	m := decodeIngestJSON(t, body)
+	cands, _ := m["candidates"].([]any)
+	if len(cands) < 2 {
+		t.Fatalf("want ≥2 candidates: %s", body)
 	}
-	// Real OCR on multi-sentence fixture → ≥2 candidates with known text.
-	if strings.Count(html, `data-testid="sentence-candidate"`) < 2 {
-		t.Fatalf("want ≥2 candidates: %s", html)
-	}
-	compact := strings.ReplaceAll(strings.ReplaceAll(html, " ", ""), "\n", "")
+	compact := strings.ReplaceAll(strings.ReplaceAll(string(body), " ", ""), "\n", "")
 	if !strings.Contains(compact, "病院に行った") || !strings.Contains(compact, "私は本を読む") {
-		t.Fatalf("missing sentence text: %s", html)
+		t.Fatalf("missing sentence text: %s", body)
 	}
 }
 
@@ -1111,6 +1119,11 @@ func TestIngest_Unauthenticated_Rejected(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Session required") && !strings.Contains(string(body), "error") {
+		// JSON error preferred when Accept application/json
+		t.Logf("unauth body=%s", body)
 	}
 }
 
@@ -1134,16 +1147,14 @@ func TestIngest_Oversize_ClearError(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	html := string(body)
 
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status=%d want 413 body=%s", resp.StatusCode, html)
+		t.Fatalf("status=%d want 413 body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(html, `data-testid="page-text-error"`) && !strings.Contains(html, `data-testid="candidates-error"`) {
-		t.Fatalf("missing error partial: %s", html)
-	}
-	if !strings.Contains(html, "10") || !strings.Contains(strings.ToLower(html), "large") {
-		t.Fatalf("error should mention size cap: %s", html)
+	m := decodeIngestJSON(t, body)
+	errMsg, _ := m["error"].(string)
+	if !strings.Contains(errMsg, "10") || !strings.Contains(strings.ToLower(errMsg), "large") {
+		t.Fatalf("error should mention size cap: %s", body)
 	}
 }
 
@@ -1173,17 +1184,16 @@ func TestIngest_OCRFailure_QueueIntact(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	html := string(body)
 
-	// Engine error → 422 OCR error partial (not 200 candidates).
+	// Engine error → 422 JSON error (not 200 candidates).
 	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status=%d want 422 body=%s", resp.StatusCode, html)
+		t.Fatalf("status=%d want 422 body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(html, `role="alert"`) {
-		t.Fatalf("missing alert: %s", html)
-	}
-	if !strings.Contains(strings.ToLower(html), "image") && !strings.Contains(strings.ToLower(html), "ocr") && !strings.Contains(strings.ToLower(html), "photo") {
-		t.Fatalf("OCR fail message unclear: %s", html)
+	m := decodeIngestJSON(t, body)
+	errMsg, _ := m["error"].(string)
+	lower := strings.ToLower(errMsg)
+	if !strings.Contains(lower, "image") && !strings.Contains(lower, "read") && !strings.Contains(lower, "retake") {
+		t.Fatalf("OCR fail message unclear: %s", body)
 	}
 
 	// Queue still has the seed entry.
@@ -1211,7 +1221,7 @@ func TestIngest_OCRFailure_QueueIntact(t *testing.T) {
 	}
 }
 
-func TestHome_ShowsPhotoUploadSection(t *testing.T) {
+func TestHome_ShowsTakePhotoAndQueue(t *testing.T) {
 	s := newTestServer(t)
 	cookies := unlockCookies(t, s)
 	req := httptest.NewRequest(http.MethodGet, "/home", nil)
@@ -1225,17 +1235,136 @@ func TestHome_ShowsPhotoUploadSection(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
-	if !strings.Contains(html, `data-testid="photo-upload-section"`) {
-		t.Fatalf("missing photo-upload-section: %s", html)
+	if !strings.Contains(html, `data-testid="app-home"`) {
+		t.Fatalf("missing app-home: %s", html)
 	}
-	if !strings.Contains(html, `data-testid="photo-input"`) {
-		t.Fatalf("missing photo-input: %s", html)
+	if !strings.Contains(html, `data-testid="take-photo"`) || !strings.Contains(html, `href="/capture"`) {
+		t.Fatalf("missing Take photo: %s", html)
 	}
-	if !strings.Contains(html, `hx-post="/ingest"`) {
-		t.Fatalf("photo form should post /ingest: %s", html)
+	if !strings.Contains(html, `data-testid="nav-queue"`) {
+		t.Fatalf("missing Queue: %s", html)
 	}
-	if !strings.Contains(html, `hx-encoding="multipart/form-data"`) {
-		t.Fatalf("photo form needs multipart encoding: %s", html)
+	if strings.Contains(html, `data-testid="photo-upload-section"`) {
+		t.Fatal("file upload section must not appear on home")
+	}
+	if strings.Contains(html, `data-testid="sentence-input"`) {
+		t.Fatal("manual sentence input must not appear on home")
+	}
+}
+
+func TestCapture_ShowsCameraChrome(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/capture", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if !strings.Contains(html, `data-testid="capture-page"`) {
+		t.Fatalf("missing capture-page: %s", html)
+	}
+	if !strings.Contains(html, `data-testid="camera-shutter"`) {
+		t.Fatalf("missing shutter: %s", html)
+	}
+	if !strings.Contains(html, `data-testid="capture-back"`) {
+		t.Fatalf("missing back: %s", html)
+	}
+	if strings.Contains(html, `data-testid="photo-upload-section"`) {
+		t.Fatal("file upload must not appear on capture")
+	}
+}
+
+func TestIngest_JSON_Success_SchemaAndRegions(t *testing.T) {
+	eng := ocr.Static{
+		Text: "病院に行った。私は本を読む。",
+		Lines: []ports.OcrLine{
+			{Text: "病院に行った。", X: 0, Y: 0, W: 50, H: 20},
+			{Text: "私は本を読む。", X: 0, Y: 30, W: 60, H: 20},
+		},
+		Width:  100,
+		Height: 100,
+	}
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), eng)
+	cookies := unlockCookies(t, s)
+	req := multipartIngest(t, "page.jpg", []byte("fake-image"))
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	m := decodeIngestJSON(t, body)
+	cands, ok := m["candidates"].([]any)
+	if !ok || len(cands) < 2 {
+		t.Fatalf("candidates: %s", body)
+	}
+	regs, ok := m["regions"].([]any)
+	if !ok || len(regs) < 1 {
+		t.Fatalf("regions: %s", body)
+	}
+	r0, _ := regs[0].(map[string]any)
+	if r0["text"] == nil || r0["x"] == nil || r0["y"] == nil || r0["w"] == nil || r0["h"] == nil {
+		t.Fatalf("region fields: %+v", r0)
+	}
+	if int(m["img_w"].(float64)) != 100 || int(m["img_h"].(float64)) != 100 {
+		t.Fatalf("img dims: %v %v", m["img_w"], m["img_h"])
+	}
+}
+
+func TestIngest_JSON_EmptyRegionsWhenNoGeometry(t *testing.T) {
+	s := newTestServer(t) // default Static text only
+	cookies := unlockCookies(t, s)
+	req := multipartIngest(t, "page.jpg", []byte("x"))
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	m := decodeIngestJSON(t, body)
+	cands, _ := m["candidates"].([]any)
+	if len(cands) < 1 {
+		t.Fatalf("want candidates: %s", body)
+	}
+	regs, _ := m["regions"].([]any)
+	if len(regs) != 0 {
+		t.Fatalf("want empty regions without geometry: %s", body)
+	}
+}
+
+func TestCapture_WithoutSession_Rejected(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/capture", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if strings.Contains(string(body), `data-testid="capture-page"`) {
+		t.Fatal("must not show capture without session")
+	}
+	if !strings.Contains(string(body), "Session required") && !strings.Contains(string(body), `name="pin"`) {
+		t.Fatalf("want pin/session: %s", body)
 	}
 }
 
@@ -1291,13 +1420,13 @@ type slowHTTPORC struct {
 	once    sync.Once
 }
 
-func (s *slowHTTPORC) Recognize(ctx context.Context, image []byte) (string, error) {
+func (s *slowHTTPORC) Recognize(ctx context.Context, image []byte) (ports.OcrResult, error) {
 	s.once.Do(func() { close(s.started) })
 	select {
 	case <-s.release:
-		return s.text, nil
+		return ports.OcrResult{Text: s.text}, nil
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return ports.OcrResult{}, ctx.Err()
 	}
 }
 
@@ -1318,7 +1447,9 @@ func TestIngest_MissingImageField_BadRequest(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), "Choose an image") && !strings.Contains(string(body), "image") {
+	m := decodeIngestJSON(t, body)
+	errMsg, _ := m["error"].(string)
+	if !strings.Contains(strings.ToLower(errMsg), "capture") && !strings.Contains(strings.ToLower(errMsg), "photo") {
 		t.Fatalf("body=%s", body)
 	}
 }
@@ -1339,7 +1470,8 @@ func TestIngest_EmptyOCRText_BadRequest(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), "No text found") {
+	m := decodeIngestJSON(t, body)
+	if errMsg, _ := m["error"].(string); !strings.Contains(errMsg, "No text found") {
 		t.Fatalf("body=%s", body)
 	}
 }
@@ -1421,8 +1553,8 @@ func TestIndex_WithSession_ShowsShell(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
-	if !strings.Contains(string(body), `data-testid="app-shell"`) {
-		t.Fatalf("expected shell: %s", body)
+	if !strings.Contains(string(body), `data-testid="app-home"`) {
+		t.Fatalf("expected home: %s", body)
 	}
 }
 
@@ -1523,12 +1655,12 @@ func TestIngest_Canceled_RequestTimeout408(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	html := string(body)
 	if resp.StatusCode != http.StatusRequestTimeout {
-		t.Fatalf("status=%d want 408 body=%s", resp.StatusCode, html)
+		t.Fatalf("status=%d want 408 body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(strings.ToLower(html), "cancel") {
-		t.Fatalf("want cancel message: %s", html)
+	m := decodeIngestJSON(t, body)
+	if errMsg, _ := m["error"].(string); !strings.Contains(strings.ToLower(errMsg), "cancel") {
+		t.Fatalf("want cancel message: %s", body)
 	}
 }
 
@@ -1549,8 +1681,8 @@ func TestRequireAuth_HTML_RendersPinPage(t *testing.T) {
 	if !strings.Contains(html, `data-testid="pin-form"`) && !strings.Contains(html, `name="pin"`) {
 		t.Fatalf("want pin page: %s", html)
 	}
-	if strings.Contains(html, `data-testid="app-shell"`) {
-		t.Fatal("must not show shell")
+	if strings.Contains(html, `data-testid="app-home"`) {
+		t.Fatal("must not show home")
 	}
 	if !strings.Contains(html, "Session required") {
 		t.Fatalf("want session message: %s", html)

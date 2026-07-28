@@ -1,7 +1,7 @@
 # miner
 
 Local home-server app for mining Japanese novel vocabulary from a phone browser on your LAN.  
-Unlock with a shared PIN → capture or paste a page → analyze → mark unknowns → export Markdown.  
+Unlock with a shared PIN → take a page photo → tap a sentence → mark kanji unknowns → export Markdown.  
 No Anki, no cloud OCR, no translation API — everything stays on your PC.
 
 Product plans: [`.scratch/novel-miner/`](.scratch/novel-miner/spec.md) · Domain vocabulary: [`CONTEXT.md`](CONTEXT.md)  
@@ -96,7 +96,7 @@ flowchart TB
 | Layer | Package | Responsibility |
 |-------|---------|----------------|
 | Process | `cmd/miner` | Env, data dir, wire adapters, listen, LAN URL hints |
-| HTTP adapter | `internal/httpapi` | Cookies, multipart, HTMX partials, status ↔ product errors |
+| HTTP adapter | `internal/httpapi` | Cookies, multipart JSON ingest, HTMX analyze/unknowns, status ↔ product errors |
 | Facade | `internal/app` | All product rules (C1: new use-cases land here first) |
 | Ports | `internal/ports` | Small interfaces only |
 | Adapters | `internal/adapters/*` | PIN, Kagome / Stub analyzer, file/mem queue, NDLOCR-Lite / Static OCR |
@@ -111,39 +111,40 @@ flowchart TB
 | Queue entries + unknowns | Yes | `MINER_DATA_DIR/queue.json` (owner-only `0o600`) |
 | Session “unlocked” | No | In-memory Fiber session store |
 | `pass_id` → entry bind | No | In-memory on MiningApp |
-| Uploaded / camera images | Never written | Held in request memory, discarded |
+| Camera capture bytes | Never written | Held in request memory, discarded after OCR |
 
 ---
 
 ## Learner flow
 
+Stepped phone UI (main / capture not scrollable; sentence detail + queue scroll).
+
 ```mermaid
 flowchart TD
-  PIN[1. Enter PIN] --> SHELL[2. Mine shell]
-  SHELL --> IN[3. Ingest page]
-  IN --> CAM[Camera capture]
-  IN --> UP[Photo upload]
-  IN --> PASTE[Paste page text]
-  IN --> ONE[Type one sentence]
-  CAM --> CAND[Sentence candidates]
-  UP --> CAND
-  PASTE --> CAND
-  CAND --> PICK[4. Pick / edit working sentence]
-  ONE --> ANALYZE
-  PICK --> ANALYZE[5. Analyze → furigana + content words]
-  ANALYZE --> TAP[6. Tap unknowns]
-  TAP --> Q[7. Queue list]
-  Q --> EX[8. Export Markdown]
-  Q --> CL[9. Clear all]
+  PIN[1. Enter PIN] --> HOME[2. Home]
+  HOME --> CAP[3. Take photo]
+  HOME --> Q[Queue]
+  CAP --> LIVE[Live camera]
+  LIVE -->|shutter| FRZ[Frozen page + sentence boxes]
+  FRZ -->|tap sentence| DET[4. Sentence detail]
+  DET -->|back| FRZ
+  FRZ -->|back unfreeze| LIVE
+  LIVE -->|back| HOME
+  DET --> RUBY[Ruby + kanji-only vocab]
+  RUBY --> TAP[5. Tap unknowns]
+  TAP --> Q
+  Q --> EX[6. Export Markdown]
+  Q --> CL[7. Clear all]
 ```
 
-1. **PIN** unlock → mining shell  
-2. **Ingest** a page — camera, upload (≤10 MiB), multi-sentence paste, or single sentence  
-3. **Pick** a candidate (or edit) → **Analyze** → HTML ruby + content-word list  
-4. **Tap** content words → save unknowns (save / duplicate feedback)  
-5. **Queue** → list entries → **Export Markdown** (queue unchanged) or **Clear all**  
+1. **PIN** unlock → **Home** (Take photo · Queue)  
+2. **Take photo** → full-bleed camera → shutter → OCR freezes the shot  
+3. **Tap a sentence** on the photo (boxes when OCR geometry exists; chips fallback otherwise)  
+4. **Sentence detail** (already analyzed) → furigana + **kanji-only** content words  
+5. **Tap** words → save unknowns (save / duplicate feedback); **Back** returns to the frozen photo  
+6. **Queue** → list → **Export Markdown** (queue unchanged) or **Clear all**  
 
-No per-unknown remove in v1. Photos discarded after OCR. Primary material = novel prose; non-novel is best-effort.
+No file upload, no paste-page, no type-one-sentence in the product UI. No per-unknown remove in v1. Photos discarded after OCR. Primary material = novel prose; non-novel is best-effort.
 
 ---
 
@@ -175,7 +176,7 @@ sequenceDiagram
 |-------|----------|------|
 | `pass_id` | No | Binds taps from one analyze result to one entry |
 | `entry_id` | Yes (in queue) | Set after first save; further appends use it |
-| `sentence` + `surface` | In queue after save | Working sentence + tapped surface form |
+| `sentence` + `surface` | In queue after save | Sentence text at first save + tapped surface form |
 
 Clear all wipes the queue **and** pass bindings (coordinated so concurrent mark+clear cannot orphan binds).
 
@@ -199,8 +200,8 @@ requirements-ocr.txt          # Python deps for the OCR worker venv
 internal/adapters/queuestore/ # file + mem QueueStore
 internal/httpapi/             # Fiber + session + handlers
 internal/ocrtest/             # OCR fixture loader (tests)
-web/templates/                # pin, shell, queue, partials
-web/static/                   # htmx.min.js, camera.js
+web/templates/                # pin, home, capture, queue, analyze/unknown partials
+web/static/                   # htmx.min.js, camera.js (capture modes)
 e2e/                          # headless UI journeys (rod)
 testdata/ocr/                 # synthetic page fixtures
 .scratch/novel-miner/         # product plans / tickets
@@ -225,17 +226,18 @@ All mining routes require session except `/` and `POST /unlock`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/` | PIN page or shell if already unlocked |
-| `POST` | `/unlock` | Verify PIN → session cookie (rate-limited per IP) |
-| `GET` | `/home` | Mining shell |
-| `POST` | `/page-text` | Paste → sentence candidates (HTMX) |
-| `POST` | `/ingest` | Multipart `image` → OCR → candidates (HTMX) |
-| `POST` | `/analyze` | Sentence → furigana + content words + `pass_id` |
+| `GET` | `/` | PIN page, or **home** if already unlocked |
+| `POST` | `/unlock` | Verify PIN → session cookie (rate-limited per IP) → home |
+| `GET` | `/home` | Home hub: **Take photo** · **Queue** |
+| `GET` | `/capture` | Full-page camera / freeze / in-page sentence detail |
+| `POST` | `/ingest` | Multipart `image` → OCR → **JSON** `{candidates, regions, img_w, img_h}` (or `{error}`) |
+| `POST` | `/analyze` | Sentence → furigana + kanji content words + `pass_id` (HTML partial) |
 | `POST` | `/unknowns` | Mark unknown (`sentence`, `surface`, `entry_id?`, `pass_id?`) |
 | `GET` | `/queue` | Queue HTML + export / clear controls |
 | `GET` | `/export` | UTF-8 Markdown download (does **not** clear queue) |
 | `POST` | `/queue/clear` | Wipe queue (UI confirms when N≥1) |
 | `GET` | `/static/*` | HTMX, camera.js, assets |
+| `POST` | `/page-text` | Legacy paste → HTML candidates (not linked in UI; tests/dev) |
 
 ---
 
@@ -358,8 +360,9 @@ If startup fails with `OCR engine: …`, fix `MINER_NDL_ROOT` / `MINER_NDL_PYTHO
 ### 6. Open on the PC first
 
 1. Browser → [http://127.0.0.1:8080](http://127.0.0.1:8080)  
-2. Enter `MINER_PIN` → you should see the **Mine** shell  
-3. Paste `私は本を読む。` → Analyze → confirm furigana + content words  
+2. Enter `MINER_PIN` → **Home** with **Take photo** and **Queue**  
+3. **Take photo** → allow camera (localhost is a secure context) → capture a page or use a phone via tunnel for real novel shots  
+4. Tap a sentence → confirm furigana + kanji-only content words  
 
 ### 7. Optional: live template edit
 
@@ -449,21 +452,21 @@ macOS: System Settings → Network → Firewall → allow incoming for the binar
 2. Address bar: `http://192.168.x.x:8080` (your PC IP from step 3).  
 3. **http** not https (local LAN; cookie is `HttpOnly` + `SameSite=Lax`, not Secure).  
 4. Enter the same `MINER_PIN` as the PC.  
-5. You should see **Mine** / **Queue** nav.
+5. You should see **Home**: **Take photo** · **Queue**.
 
-### Step 6 — Camera permission (optional)
+### Step 6 — Camera permission (required for mining)
 
-1. On Mine → **Open camera**.  
-2. Allow camera for the site when prompted.  
-3. **Capture page** → same OCR path as file upload.  
-4. If denied / no camera → use **Page photo** upload or paste text.
+1. Home → **Take photo**.  
+2. Allow camera when prompted.  
+3. Shutter → page freezes → tap a boxed sentence (or chip if geometry missing).  
+4. On sentence detail, tap kanji content words → **Queue**.
 
-HTTPS is not required for many phones on LAN, but **iOS Safari does not expose `getUserMedia` on plain `http://LAN-IP`**. If **Open camera** says “Camera not available…”, use [Cloudflare Tunnel](#phone-via-cloudflare-tunnel-https--camera) or **Page photo** upload / paste.
+HTTPS is not required for many phones on LAN, but **iOS Safari does not expose `getUserMedia` on plain `http://LAN-IP`**. If the camera does not open, use [Cloudflare Tunnel](#phone-via-cloudflare-tunnel-https--camera) so Safari sees HTTPS.
 
 ### Step 7 — Smoke the full path on phone
 
-1. Upload or capture a clear novel page (or paste text).  
-2. Pick a sentence → Analyze → tap 1–2 content words.  
+1. Capture a clear novel page (fill the frame, reduce tilt).  
+2. Tap a sentence → tap 1–2 kanji content words.  
 3. Open **Queue** → confirm entries.  
 4. **Export Markdown** → file downloads.  
 5. **Clear all** → confirm dialog when N≥1.
@@ -476,10 +479,10 @@ HTTPS is not required for many phones on LAN, but **iOS Safari does not expose `
 | Opens then “Session required” | Cookie blocked? Retry unlock; avoid private-mode quirks |
 | PIN always wrong | Same `MINER_PIN` as in `.env` / process env; rate limit after many fails (wait ~1 min) |
 | No LAN IP in logs | PC offline / only loopback; connect Wi‑Fi or set `MINER_ADDR` |
-| Camera blocked | Plain HTTP is not a secure context on iPhone Safari — use `make run-tunnel` or **Page photo** upload |
+| Camera blocked | Plain HTTP is not a secure context on iPhone Safari — use `make run-tunnel` |
 | `make run` says MINER_PIN required | `cp .env.example .env` and set `MINER_PIN=…`, or `export MINER_PIN=…` |
 | Tunnel URL won’t open camera | Confirm you opened the **https://\*.trycloudflare.com** URL (not LAN `http://`) |
-| OCR empty / garbage | Better photo, fill frame, less tilt; edit sentence; paste text fallback |
+| OCR empty / garbage | Better photo, fill frame, less tilt; retake; no boxes → chips list still tappable |
 | Server dies at start with “OCR engine” | `MINER_NDL_ROOT` / python / worker wrong — see [OCR](#ocr-ndlocr-lite) |
 | First photo very slow | Normal: models warm on process start; later pages should be faster |
 
@@ -518,7 +521,7 @@ Implementation: `make run-tunnel` → `scripts/run_tunnel.sh` starts miner, wait
 
 1. Wait for cloudflared to print a box with `https://….trycloudflare.com`.  
 2. Open that URL on the phone (any network — not limited to home Wi‑Fi).  
-3. Enter PIN → **Open camera** → allow when Safari prompts.  
+3. Enter PIN → **Take photo** → allow camera when Safari prompts.  
 4. `Ctrl+C` stops miner and the tunnel.
 
 Default bind is `127.0.0.1:8080` (loopback only; tunnel is the phone path). To also keep LAN HTTP while tunneling, set in `.env` or the shell:
@@ -599,20 +602,21 @@ Production photo / camera ingest uses **[NDLOCR-Lite](https://github.com/ndl-lab
 ### How miner wires it
 
 ```text
-Phone photo / upload
-  → POST /ingest (httpapi)
+Phone camera capture
+  → POST /ingest (httpapi, Accept: application/json)
   → MiningApp.IngestPage
-  → ports.OcrEngine.Recognize(ctx, image bytes)
+  → ports.OcrEngine.Recognize(ctx, image bytes) → OcrResult
   → adapters/ocr.NDL  (Go)
        writes temp image
        JSON line → scripts/ndl_ocr_worker.py (long-lived Python)
-       ← plain text (trim only)
-  → NormalizePageText → SplitSentences → candidates HTML
+       ← text + line boxes + image size
+  → NormalizePageText → SplitSentences → MapLinesToSentenceRegions
+  → JSON { candidates, regions, img_w, img_h }
 ```
 
 | Piece | Role |
 |-------|------|
-| `internal/ports.OcrEngine` | Small seam: `Recognize(ctx, image) → text` |
+| `internal/ports.OcrEngine` | Seam: `Recognize(ctx, image) → OcrResult{Text, Lines, Width, Height}` |
 | `internal/adapters/ocr.NDL` | Prod adapter: starts/owns worker, honors cancel/deadline |
 | `internal/adapters/ocr.Static` | Test double (default L1/L2/L3 — no Python needed) |
 | `scripts/ndl_ocr_worker.py` | Loads ONNX models **once**, then answers JSON requests |
@@ -622,12 +626,14 @@ Worker protocol (one JSON object per line):
 
 ```json
 {"id":"1","image_path":"/tmp/miner-ocr-xxx.png"}
-{"id":"1","ok":true,"text":"病院に行った。\n私は本を読む。"}
+{"id":"1","ok":true,"text":"病院に行った。\n私は本を読む。",
+ "img_width":1920,"img_height":1080,
+ "lines":[{"text":"病院に行った。","x":10,"y":20,"w":100,"h":40}]}
 ```
 
 On startup the worker emits `{"ready":true}` after models load; miner waits (default up to 120s) before accepting traffic that needs OCR.
 
-**Product hygiene stays in MiningApp:** inter-CJK space strip and blank-line collapse via `NormalizePageText`. The adapter returns engine text only.
+**Product hygiene stays in MiningApp:** `NormalizePageText`, `SplitSentences`, and sentence-region mapping. The adapter returns engine text + optional geometry only.
 
 ### Install (home PC, CPU) — Linux & macOS
 
@@ -674,6 +680,7 @@ make ocr-env   # copy exports, or rely on .deps defaults
 | Single-flight | One ingest at a time (`409` if busy) |
 | Queue on OCR fail | Untouched |
 | Image persistence | Never written under data dir (temp file only, deleted after OCR) |
+| Response | JSON candidates + normalized sentence regions (empty regions → UI chips) |
 | Empty OCR text | `ErrEmptyPage` after normalize |
 | Cancel mid-OCR | `ErrIngestCanceled` |
 
@@ -719,13 +726,12 @@ Fixtures: `testdata/ocr/` (55 cases). Tags: **happy**, **vertical**, **novel**, 
 
 | Goal | What to do |
 |------|------------|
-| Mine from photo | Mine → camera or **Page photo** → pick sentence → Analyze → tap words |
-| Mine from paste | **Page text** → Propose → pick → Analyze → tap |
-| One sentence only | Working sentence box → Analyze → tap |
-| Review queue | **Queue** nav |
+| Mine from photo | Home → **Take photo** → shutter → tap sentence → tap kanji words |
+| Review queue | Home → **Queue** |
 | Backup unknowns | **Export Markdown** (queue stays) |
 | Wipe session work | **Clear all** (confirm) |
 | After PC reboot | Start `make run` again → re-enter PIN → queue file still there |
+| iPhone camera | Prefer `make run-tunnel` (HTTPS); plain LAN HTTP often blocks camera |
 
 Export shape (nested list, order by first-unknown-at):
 
@@ -753,7 +759,7 @@ make lint          # vet + staticcheck + ineffassign + deadcode
 |-------|--------|------|
 | **L1** | `internal/app` | Product rules via MiningApp (fakes + mem/file store + `ocr.Static`) |
 | **L2** | `internal/httpapi` | Fiber `app.Test`: session, HTMX, multipart, pass transport |
-| **L3** | `e2e` | rod + Chromium: PIN → ingest paths → mark → export → clear |
+| **L3** | `e2e` | rod + Chromium: PIN → home → capture freeze → pick → mark → export → clear |
 | **Process** | `cmd/miner` | `.env` loader, LAN hints, `.env.example` / Makefile / tunnel script contracts |
 | **OCR-real** | selected | `MustEngine` / smoke + contract; skips without NDLOCR-Lite env |
 
@@ -776,6 +782,7 @@ Process/contract tests cover: `loadDotEnv` (no override of existing env), parse 
 | 06 | Photo ingest + local OCR | done |
 | 07 | Phone camera capture UX | done |
 | 08 | Novel UX hardening | done (manual phone novel E2E still recommended) |
+| 09 | Stepped camera UI + sentence regions + kanji-only vocab | done on `feat/uiux-update` (manual phone novel E2E still recommended) |
 
 ---
 
@@ -786,21 +793,25 @@ Process/contract tests cover: `loadDotEnv` (no override of existing env), parse 
 - `POST /analyze` requires session.  
 - Production: **`analyzer.Kagome`** (kagome + MeCab-IPADIC, pure Go — no host install).  
 - Tests/L1–L3 keep **`analyzer.Stub`** (fixtures + force-error `__analyze_error__`).  
-- Content-word baseline: keep nouns/verbs/adjectives/na-adj stems/adverbs/…; drop particles, aux, symbols, conjunctions.
+- Content-word baseline: keep content tokens with **≥1 kanji** (Han); drop particles/aux/symbols **and** pure hiragana/katakana surfaces.  
+- Furigana still uses the full token stream (including kana-only readings).
 
-### Camera (ticket 07)
+### Capture UI (stepped)
 
-- Client script: `web/static/camera.js` → same `POST /ingest` as upload.  
-- No new routes or MiningApp rules.  
-- Permission denied / no camera → in-page message; upload remains.  
-- **Secure context required** for live camera (`navigator.mediaDevices`). Plain `http://LAN-IP` fails on iOS Safari with “Camera not available…”.  
-- Fix: `make run-tunnel` (HTTPS via free Cloudflare quick tunnel) or use **Page photo** upload (system camera still works).
+- Pages: **home** → **capture** (live / frozen / detail modes in one document) → **queue**.  
+- Client: `web/static/camera.js` → `POST /ingest` with `Accept: application/json`.  
+- After OCR: freeze frame + **sentence regions** (normalized boxes from OCR line geometry) or **chips** when geometry missing.  
+- Tap sentence → `POST /analyze` into detail panel; mark unknowns via HTMX as before.  
+- Back: detail → frozen photo; frozen → live (unfreeze); live → home.  
+- **Secure context required** for live camera. Plain `http://LAN-IP` fails on iOS Safari.  
+- Fix: `make run-tunnel` (HTTPS via free Cloudflare quick tunnel).
 
 ### Photo OCR (NDLOCR-Lite)
 
 - Prod engine: `ocr.NDL` + `scripts/ndl_ocr_worker.py` (not Tesseract).  
+- Engine returns text **plus line boxes**; MiningApp maps lines → sentence regions.  
 - Tuned for Japanese printed books / 縦書き; phone photos are best-effort (tilt, blur, mixed light).  
-- Paste path (`POST /page-text`) still works with no OCR install for pure text mining.  
+- Image ≤ **10 MiB**; discarded after OCR (never stored).  
 - See [OCR (NDLOCR-Lite)](#ocr-ndlocr-lite) for install, env, and contract tests.
 
 ### Unknowns + queue

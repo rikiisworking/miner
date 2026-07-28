@@ -43,7 +43,7 @@ func TestNDL_FakeWorker_OK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "病院に行った。" {
+	if text.Text != "病院に行った。" {
 		t.Fatalf("got %q", text)
 	}
 }
@@ -98,7 +98,7 @@ func TestNDL_NilAndCanceledContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "病院に行った。" {
+	if text.Text != "病院に行った。" {
 		t.Fatalf("got %q", text)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,7 +116,7 @@ func TestNDL_ReuseWorker_MultipleRecognizes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("i=%d: %v", i, err)
 		}
-		if text != "病院に行った。" {
+		if text.Text != "病院に行った。" {
 			t.Fatalf("i=%d got %q", i, text)
 		}
 	}
@@ -128,7 +128,7 @@ func TestNDL_WorkerNoiseThenReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "ok-after-noise" {
+	if text.Text != "ok-after-noise" {
 		t.Fatalf("got %q", text)
 	}
 }
@@ -139,7 +139,7 @@ func TestNDL_WorkerStaleIDThenMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "matched" {
+	if text.Text != "matched" {
 		t.Fatalf("got %q", text)
 	}
 }
@@ -173,7 +173,7 @@ func TestNDL_WorkerRestartAfterExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if text != "once" {
+	if text.Text != "once" {
 		t.Fatalf("first text %q", text)
 	}
 	// Give process a moment to die so next write fails and triggers restart.
@@ -182,7 +182,7 @@ func TestNDL_WorkerRestartAfterExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second after restart: %v", err)
 	}
-	if text != "once" {
+	if text.Text != "once" {
 		t.Fatalf("second text %q", text)
 	}
 }
@@ -326,7 +326,7 @@ for line in sys.stdin:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "discovered" {
+	if text.Text != "discovered" {
 		t.Fatalf("got %q", text)
 	}
 }
@@ -381,7 +381,7 @@ func TestNewNDLFromEnv_WithFake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "病院に行った。" {
+	if text.Text != "病院に行った。" {
 		t.Fatalf("got %q", text)
 	}
 }
@@ -397,7 +397,7 @@ func TestMustEngine_WithFakeEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "病院に行った。" {
+	if text.Text != "病院に行った。" {
 		t.Fatalf("got %q", text)
 	}
 }
@@ -441,9 +441,9 @@ func TestNDL_SmokeSingleSentence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recognize: %v", err)
 	}
-	got := strings.ReplaceAll(text, " ", "")
+	got := strings.ReplaceAll(text.Text, " ", "")
 	if !strings.Contains(got, "私は本を読む") {
-		t.Fatalf("got %q want contain 私は本を読む", text)
+		t.Fatalf("got %q want contain 私は本を読む", text.Text)
 	}
 }
 
@@ -461,9 +461,9 @@ func TestNDL_SmokeMultiSentence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recognize: %v", err)
 	}
-	got := strings.ReplaceAll(text, " ", "")
+	got := strings.ReplaceAll(text.Text, " ", "")
 	if !strings.Contains(got, "病院に行った") || !strings.Contains(got, "私は本を読む") {
-		t.Fatalf("multi got %q", text)
+		t.Fatalf("multi got %q", text.Text)
 	}
 }
 
@@ -484,8 +484,8 @@ func TestNDL_NotAnImageFailsOrEmpty(t *testing.T) {
 		}
 		return
 	}
-	if strings.TrimSpace(text) != "" {
-		t.Logf("not_an_image returned text=%q (tolerated)", text)
+	if strings.TrimSpace(text.Text) != "" {
+		t.Logf("not_an_image returned text=%q (tolerated)", text.Text)
 	}
 }
 
@@ -554,8 +554,8 @@ func TestNDLContract_StressSuites(t *testing.T) {
 					if c.MinOverlap != nil {
 						min = *c.MinOverlap
 					}
-					score := runeOverlap(got, c.ExpectedText)
-					t.Logf("overlap=%.2f min=%.2f out_len=%d", score, min, len(strings.TrimSpace(got)))
+					score := runeOverlap(got.Text, c.ExpectedText)
+					t.Logf("overlap=%.2f min=%.2f out_len=%d", score, min, len(strings.TrimSpace(got.Text)))
 
 					if contractSoftIDs[c.ID] {
 						if score < min {
@@ -567,7 +567,7 @@ func TestNDLContract_StressSuites(t *testing.T) {
 						return
 					}
 					if score < min {
-						t.Errorf("overlap=%.2f < %.2f\n got=%q\nwant=%q", score, min, got, c.ExpectedText)
+						t.Errorf("overlap=%.2f < %.2f\n got=%q\nwant=%q", score, min, got.Text, c.ExpectedText)
 					}
 				})
 				ran++
@@ -606,9 +606,9 @@ func TestNDLContract_HappyPathOverlap(t *testing.T) {
 			if c.MinOverlap != nil {
 				min = *c.MinOverlap
 			}
-			score := runeOverlap(got, c.ExpectedText)
+			score := runeOverlap(got.Text, c.ExpectedText)
 			if score < min {
-				t.Errorf("overlap=%.2f < %.2f\n got=%q\nwant=%q", score, min, got, c.ExpectedText)
+				t.Errorf("overlap=%.2f < %.2f\n got=%q\nwant=%q", score, min, got.Text, c.ExpectedText)
 			}
 		})
 	}

@@ -45,7 +45,7 @@
 <body>
 <main data-testid="queue-page">
   <nav>
-    <a href="/home" data-testid="nav-home">Mine</a>
+    <a href="/home" data-testid="nav-home">Home</a>
     <a href="/queue" data-testid="nav-queue" aria-current="page">Queue</a>
   </nav>
   <h1>Queue</h1>
@@ -64,7 +64,7 @@
   </div>
   {{if not .Entries}}
   <p class="empty-state muted" data-testid="queue-empty">
-    Queue is empty. On <strong>Mine</strong>, analyze a sentence and tap a content word to save an unknown.
+    Queue is empty. Take a photo, pick a sentence, then tap a content word to save an unknown.
   </p>
   {{else}}
   <p class="muted" data-testid="queue-count">{{len .Entries}} entr{{if eq (len .Entries) 1}}y{{else}}ies{{end}}</p>

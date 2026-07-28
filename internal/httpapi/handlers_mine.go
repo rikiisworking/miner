@@ -9,8 +9,8 @@ import (
 	"github.com/rikiisworking/miner/internal/app"
 )
 
-// handlePageText proposes sentence candidates from multi-sentence page paste (ticket 05).
-// Ephemeral only — does not write the durable queue.
+// handlePageText proposes sentence candidates from multi-sentence page paste (legacy API / L2).
+// Ephemeral only — not linked in stepped UI.
 func (s *Server) handlePageText(c *fiber.Ctx) error {
 	pageText := c.FormValue("page_text")
 	cands, err := s.mining.ProposeSentences(pageText)
@@ -26,44 +26,43 @@ func (s *Server) handlePageText(c *fiber.Ctx) error {
 	})
 }
 
-// handleIngest runs photo OCR via MiningApp.IngestPage (ticket 06).
-// Multipart field "image". Image bytes are not saved to disk; discarded after return.
-// Reuses sentence_candidates partial (same pick → analyze pipeline as page-text).
+// handleIngest runs photo OCR via MiningApp.IngestPage.
+// Multipart field "image". Image bytes are not saved; discarded after return.
+// Always returns JSON for the capture UI (candidates + regions).
 func (s *Server) handleIngest(c *fiber.Ctx) error {
-	// Reject before buffering a large body when single-flight is held.
+	// Capture client always sends Accept: application/json; force JSON errors even if omitted.
+	if c.Get("Accept") == "" {
+		c.Request().Header.Set("Accept", "application/json")
+	}
+
 	if s.mining.IngestBusy() {
 		return s.renderIngestError(c, app.ErrIngestBusy)
 	}
 
 	fh, err := c.FormFile("image")
 	if err != nil || fh == nil {
-		return s.renderCandidatesErr(c, fiber.StatusBadRequest, "Choose an image of a novel page.")
+		return s.respondIngestErr(c, fiber.StatusBadRequest, msgCaptureNeeded)
 	}
-	// Header size is a cheap pre-check; MiningApp still enforces MaxUploadBytes on bytes.
 	if fh.Size > app.MaxUploadBytes {
-		return s.renderCandidatesErr(c, fiber.StatusRequestEntityTooLarge, msgImageTooLarge)
+		return s.respondIngestErr(c, fiber.StatusRequestEntityTooLarge, msgImageTooLarge)
 	}
 
 	f, err := fh.Open()
 	if err != nil {
-		return s.renderCandidatesErr(c, fiber.StatusBadRequest, "Could not read the uploaded image.")
+		return s.respondIngestErr(c, fiber.StatusBadRequest, msgImageUnreadable)
 	}
 	defer f.Close()
 
-	// Cap read so a lying Content-Length cannot blow memory past product + 1.
 	image, err := io.ReadAll(io.LimitReader(f, int64(app.MaxUploadBytes)+1))
 	if err != nil {
-		return s.renderCandidatesErr(c, fiber.StatusBadRequest, "Could not read the uploaded image.")
+		return s.respondIngestErr(c, fiber.StatusBadRequest, msgImageUnreadable)
 	}
 
 	ingested, err := s.mining.IngestPage(c.UserContext(), image)
 	if err != nil {
 		return s.renderIngestError(c, err)
 	}
-	return s.render(c, "sentence_candidates", map[string]any{
-		"Error":      "",
-		"Candidates": ingested.Candidates,
-	})
+	return s.respondIngestOK(c, ingested)
 }
 
 func (s *Server) handleAnalyze(c *fiber.Ctx) error {
@@ -71,9 +70,9 @@ func (s *Server) handleAnalyze(c *fiber.Ctx) error {
 	result, err := s.mining.AnalyzeSentence(sentence)
 	if err != nil {
 		status := fiber.StatusUnprocessableEntity
-		msg := "Analysis failed. The sentence could not be tokenized. Edit the text and try again."
+		msg := "Could not analyze this sentence. Go back and pick another."
 		if errors.Is(err, app.ErrEmptySentence) {
-			msg = "Enter a sentence to analyze."
+			msg = "Pick a sentence to analyze."
 			status = fiber.StatusBadRequest
 		} else if !errors.Is(err, app.ErrAnalyze) {
 			return s.renderUnexpected(c, err)
@@ -123,7 +122,6 @@ func (s *Server) handleAddUnknown(c *fiber.Ctx) error {
 		})
 	}
 
-	// Template only uses Error / EntryID / Surface / Duplicate.
 	return s.render(c, "unknown_feedback", map[string]any{
 		"Error":     "",
 		"EntryID":   res.EntryID,

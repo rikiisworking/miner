@@ -62,6 +62,9 @@ func TestFindDefaultWorker(t *testing.T) {
 	}
 	abs, _ := filepath.Abs(worker)
 	gotAbs, _ := filepath.Abs(got)
+	// macOS may surface /var vs /private/var depending on Abs/EvalSymlinks.
+	abs, _ = filepath.EvalSymlinks(abs)
+	gotAbs, _ = filepath.EvalSymlinks(gotAbs)
 	if gotAbs != abs {
 		t.Fatalf("got %q want %q", gotAbs, abs)
 	}

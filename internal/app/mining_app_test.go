@@ -159,6 +159,51 @@ func TestAnalyzeSentence_ContentWordFilter_OmitsParticlesAndFunction(t *testing.
 	}
 }
 
+func TestAnalyzeSentence_ContentWordFilter_KanjiOnly(t *testing.T) {
+	// Pure kana content tokens drop from vocab list; furigana Tokens keep them.
+	tokens := []ports.Token{
+		{Surface: "私", Reading: "わたし", Content: true},
+		{Surface: "は", Reading: "", Content: false},
+		{Surface: "きれい", Reading: "きれい", Content: true},   // pure hiragana
+		{Surface: "な", Reading: "", Content: false},
+		{Surface: "テレビ", Reading: "テレビ", Content: true}, // pure katakana
+		{Surface: "を", Reading: "", Content: false},
+		{Surface: "見る", Reading: "みる", Content: true}, // has kanji
+		{Surface: "。", Reading: "", Content: false},
+	}
+	sentence := "私はきれいなテレビを見る。"
+	m := newApp(t, analyzer.Stub{ByText: map[string][]ports.Token{sentence: tokens}})
+
+	got, err := m.AnalyzeSentence(sentence)
+	if err != nil {
+		t.Fatalf("AnalyzeSentence: %v", err)
+	}
+	want := []string{"私", "見る"}
+	if len(got.ContentWords) != len(want) {
+		t.Fatalf("ContentWords=%+v want surfaces %v", got.ContentWords, want)
+	}
+	for i, s := range want {
+		if got.ContentWords[i].Surface != s {
+			t.Fatalf("ContentWords[%d]=%q want %q", i, got.ContentWords[i].Surface, s)
+		}
+	}
+	// Mixed kana+kanji still kept.
+	mixed := []ports.Token{
+		{Surface: "ビール会社", Reading: "びーるがいしゃ", Content: true},
+	}
+	m2 := newApp(t, analyzer.Stub{ByText: map[string][]ports.Token{"ビール会社": mixed}})
+	got2, err := m2.AnalyzeSentence("ビール会社")
+	if err != nil {
+		t.Fatalf("AnalyzeSentence mixed: %v", err)
+	}
+	if len(got2.ContentWords) != 1 || got2.ContentWords[0].Surface != "ビール会社" {
+		t.Fatalf("mixed kana+kanji should keep: %+v", got2.ContentWords)
+	}
+	if len(got.Tokens) != len(tokens) {
+		t.Fatalf("Tokens must stay full for furigana: len=%d", len(got.Tokens))
+	}
+}
+
 func TestAnalyzeSentence_AnalyzerError_IsControlledFailure(t *testing.T) {
 	m := newApp(t, analyzer.Stub{FailWith: errors.New("engine down")})
 
@@ -874,13 +919,13 @@ type slowOCR struct {
 	once    sync.Once
 }
 
-func (s *slowOCR) Recognize(ctx context.Context, image []byte) (string, error) {
+func (s *slowOCR) Recognize(ctx context.Context, image []byte) (ports.OcrResult, error) {
 	s.once.Do(func() { close(s.started) })
 	select {
 	case <-s.release:
-		return s.text, nil
+		return ports.OcrResult{Text: s.text}, nil
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return ports.OcrResult{}, ctx.Err()
 	}
 }
 

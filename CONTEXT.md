@@ -12,7 +12,10 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 |------|---------|
 | **MiningApp** | Application facade for all product use-cases. **Primary test seam** (L1). |
 | **PinAuth** | Port: verify shared PIN. |
-| **OcrEngine** | Port: `Recognize(ctx, image) → text` (local only). Ticket 06. Prod: `adapters/ocr.NDL` (NDLOCR-Lite Python worker; engine text only, no product normalize). Test: `adapters/ocr.Static`. Product page-text hygiene: **NormalizePageText** on MiningApp before SplitSentences. Attribution: NDLOCR-Lite / NDL Lab, CC BY 4.0. |
+| **OcrEngine** | Port: `Recognize(ctx, image) → OcrResult{Text, Lines, Width, Height}` (local only). Prod: `adapters/ocr.NDL` (NDLOCR-Lite worker; text + line boxes). Test: `ocr.Static`. Product hygiene: **NormalizePageText** then **SplitSentences** / **MapLinesToSentenceRegions**. Attribution: NDLOCR-Lite / NDL Lab, CC BY 4.0. |
+| **Sentence region** | Normalized (0–1) clickable box for one candidate on a frozen page photo. Best-effort from OCR line unions; chips fallback when geometry empty. |
+| **Stepped UI** | Home (Take photo / Queue) → Capture (live → frozen boxes) → Sentence detail (ruby + kanji-only vocab) → Queue. Main/capture not scrollable. |
+| **Kanji-only vocab** | Content-word list keeps surfaces with ≥1 Han ideograph; pure hiragana/katakana dropped. Furigana Tokens unchanged. |
 | **NormalizePageText** | Pure helper: inter-CJK space strip + blank-line collapse. Used by IngestPage and ProposeSentences. |
 | **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. Prod: `adapters/analyzer.Kagome` (kagome + MeCab-IPADIC, pure Go). Test: `adapters/analyzer.Stub`. |
 | **QueueStore** | Port: durable queue entries. File JSON + Mem adapters. Surface: **Create**, **List** (unordered), **AppendUnknown** → `AppendResult`, **ClearAll**. Product display/export order lives on **MiningApp.ListQueue** / **ExportMarkdown** (FirstUnknownAt, then id). Sentinels: `queuestore.ErrEmptyID`, `ErrDuplicateID`. |
@@ -53,7 +56,7 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
 2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer Kagome / Stub, ocr NDL / Static, queuestore file + mem for tests).
-3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text / photo-ingest candidates (`POST /ingest`), analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `htmx_error` fragment (never a feature partial).
+3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/JSON. BodyLimit = MaxUploadBytes + multipart margin. Full pages: home, capture, queue, pin. `POST /ingest` JSON only (candidates + regions). HTMX partials: analyze, unknown feedback. Legacy `POST /page-text` HTML candidates (tests/dev; not linked in UI). Session gate: HTMX → `htmx_error`; JSON Accept → `{"error"}`.
 4. **web.FS()** — templates + static assets (embed by default).
 
 ## Testing layers

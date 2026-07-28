@@ -204,12 +204,23 @@ type workerReq struct {
 	ImagePath string `json:"image_path"`
 }
 
+type workerLine struct {
+	Text string `json:"text"`
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	W    int    `json:"w"`
+	H    int    `json:"h"`
+}
+
 type workerResp struct {
-	ID    string `json:"id"`
-	OK    bool   `json:"ok"`
-	Text  string `json:"text,omitempty"`
-	Error string `json:"error,omitempty"`
-	Ready bool   `json:"ready,omitempty"`
+	ID     string       `json:"id"`
+	OK     bool         `json:"ok"`
+	Text   string       `json:"text,omitempty"`
+	Lines  []workerLine `json:"lines,omitempty"`
+	ImgW   int          `json:"img_width,omitempty"`
+	ImgH   int          `json:"img_height,omitempty"`
+	Error  string       `json:"error,omitempty"`
+	Ready  bool         `json:"ready,omitempty"`
 }
 
 func (n *NDL) ensureWorker() error {
@@ -326,42 +337,42 @@ func (n *NDL) Close() error {
 }
 
 // Recognize implements ports.OcrEngine.
-// Returns engine text with trailing whitespace trimmed only — product
-// page-text normalize lives in MiningApp.
-func (n *NDL) Recognize(ctx context.Context, image []byte) (string, error) {
+// Returns engine text (trimmed) plus optional line boxes — product
+// page-text normalize and sentence region mapping live in MiningApp.
+func (n *NDL) Recognize(ctx context.Context, image []byte) (ports.OcrResult, error) {
 	if len(image) == 0 {
-		return "", ErrEmptyImage
+		return ports.OcrResult{}, ErrEmptyImage
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return ports.OcrResult{}, err
 	}
 
 	tmp, err := os.CreateTemp("", "miner-ocr-*"+imageExt(image))
 	if err != nil {
-		return "", fmt.Errorf("ocr: temp file: %w", err)
+		return ports.OcrResult{}, fmt.Errorf("ocr: temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(image); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("ocr: write temp: %w", err)
+		return ports.OcrResult{}, fmt.Errorf("ocr: write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("ocr: close temp: %w", err)
+		return ports.OcrResult{}, fmt.Errorf("ocr: close temp: %w", err)
 	}
 
 	type result struct {
-		text string
-		err  error
+		out ports.OcrResult
+		err error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		text, err := n.recognizePath(tmpPath)
-		ch <- result{text, err}
+		out, err := n.recognizePath(tmpPath)
+		ch <- result{out, err}
 	}()
 
 	// Always join the worker goroutine before removing tmp or returning.
@@ -371,20 +382,20 @@ func (n *NDL) Recognize(ctx context.Context, image []byte) (string, error) {
 	case <-ctx.Done():
 		<-ch
 		_ = os.Remove(tmpPath)
-		return "", ctx.Err()
+		return ports.OcrResult{}, ctx.Err()
 	case r := <-ch:
 		_ = os.Remove(tmpPath)
-		return r.text, r.err
+		return r.out, r.err
 	}
 }
 
-func (n *NDL) recognizePath(imagePath string) (string, error) {
+func (n *NDL) recognizePath(imagePath string) (ports.OcrResult, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if !n.ready {
 		if err := n.startLocked(); err != nil {
-			return "", err
+			return ports.OcrResult{}, err
 		}
 	}
 
@@ -392,15 +403,15 @@ func (n *NDL) recognizePath(imagePath string) (string, error) {
 	req := workerReq{ID: id, ImagePath: imagePath}
 	payload, err := json.Marshal(req)
 	if err != nil {
-		return "", err
+		return ports.OcrResult{}, err
 	}
 	if _, err := n.stdin.Write(append(payload, '\n')); err != nil {
 		// try one restart
 		if err2 := n.startLocked(); err2 != nil {
-			return "", fmt.Errorf("%w: write to worker: %v; restart: %v", ErrRecognizeFailed, err, err2)
+			return ports.OcrResult{}, fmt.Errorf("%w: write to worker: %v; restart: %v", ErrRecognizeFailed, err, err2)
 		}
 		if _, err := n.stdin.Write(append(payload, '\n')); err != nil {
-			return "", fmt.Errorf("%w: write to worker: %v", ErrRecognizeFailed, err)
+			return ports.OcrResult{}, fmt.Errorf("%w: write to worker: %v", ErrRecognizeFailed, err)
 		}
 	}
 
@@ -411,7 +422,7 @@ func (n *NDL) recognizePath(imagePath string) (string, error) {
 			if err == nil {
 				err = io.EOF
 			}
-			return "", fmt.Errorf("%w: worker closed: %v (stderr=%s)", ErrRecognizeFailed, err, truncate(n.stderr.String(), 400))
+			return ports.OcrResult{}, fmt.Errorf("%w: worker closed: %v (stderr=%s)", ErrRecognizeFailed, err, truncate(n.stderr.String(), 400))
 		}
 		line := strings.TrimSpace(n.stdout.Text())
 		if line == "" {
@@ -433,9 +444,24 @@ func (n *NDL) recognizePath(imagePath string) (string, error) {
 			if msg == "" {
 				msg = "unknown worker error"
 			}
-			return "", fmt.Errorf("%w: %s", ErrRecognizeFailed, msg)
+			return ports.OcrResult{}, fmt.Errorf("%w: %s", ErrRecognizeFailed, msg)
 		}
-		return strings.TrimSpace(resp.Text), nil
+		lines := make([]ports.OcrLine, 0, len(resp.Lines))
+		for _, ln := range resp.Lines {
+			lines = append(lines, ports.OcrLine{
+				Text: ln.Text,
+				X:    ln.X,
+				Y:    ln.Y,
+				W:    ln.W,
+				H:    ln.H,
+			})
+		}
+		return ports.OcrResult{
+			Text:   strings.TrimSpace(resp.Text),
+			Lines:  lines,
+			Width:  resp.ImgW,
+			Height: resp.ImgH,
+		}, nil
 	}
 }
 

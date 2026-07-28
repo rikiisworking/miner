@@ -116,6 +116,8 @@ func New(cfg Config) (*Server, error) {
 	f.Get("/", s.handleIndex)
 	f.Post("/unlock", s.handleUnlock)
 	f.Get("/home", s.requireAuth, s.handleHome)
+	f.Get("/capture", s.requireAuth, s.handleCapture)
+	// page-text kept for backward compat / tests; not linked in stepped UI
 	f.Post("/page-text", s.requireAuth, s.handlePageText)
 	f.Post("/ingest", s.requireAuth, s.handleIngest)
 	f.Post("/analyze", s.requireAuth, s.handleAnalyze)
@@ -141,7 +143,7 @@ func (s *Server) Shutdown() error {
 	return s.fiber.Shutdown()
 }
 
-// errorHandler maps framework errors (e.g. BodyLimit 413) to HTMX-friendly HTML.
+// errorHandler maps framework errors (e.g. BodyLimit 413) to JSON or HTMX HTML.
 func (s *Server) errorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
 	var fe *fiber.Error
@@ -149,12 +151,17 @@ func (s *Server) errorHandler(c *fiber.Ctx, err error) error {
 		code = fe.Code
 	}
 	if code == fiber.StatusRequestEntityTooLarge {
-		return s.renderCandidatesErr(c, code, msgImageTooLarge)
+		// Capture client always expects JSON on /ingest.
+		return s.respondIngestErr(c, code, msgImageTooLarge)
 	}
 	if c.Get("HX-Request") == "true" {
-		return s.renderHTMXError(c, code, "Something went wrong. Try again.")
+		return s.renderHTMXError(c, code, msgGenericError)
 	}
-	return c.Status(code).SendString(err.Error())
+	if wantsJSON(c) {
+		return c.Status(code).JSON(fiber.Map{"error": msgGenericError})
+	}
+	// Never leak framework/internal error strings to the client.
+	return c.Status(code).SendString(msgGenericError)
 }
 
 func (s *Server) unlockAllowed(ip string) bool {

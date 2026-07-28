@@ -24,7 +24,7 @@ import (
 )
 
 // defaultE2EOCR: multi-sentence text so photo + page-text journeys work without
-// host tesseract. Real CLI only where a test calls startServerWith + MustEngine.
+// host NDLOCR-Lite. Real engine only where a test calls startServerWith + MustEngine.
 var defaultE2EOCR ports.OcrEngine = ocr.Static{Text: "病院に行った。\n私は本を読む。"}
 
 func startServer(t *testing.T) (baseURL string, shutdown func()) {
@@ -774,7 +774,7 @@ func TestUI_CameraCapture_ControlPresent_FallbackOrClickable(t *testing.T) {
 }
 
 func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
-	// Static OCR returns multi-sentence text for any upload (no host tesseract).
+	// Static OCR returns multi-sentence text for any upload (no host NDLOCR-Lite).
 	base, shutdown := startServer(t)
 	t.Cleanup(shutdown)
 	imgPath := fixtureImagePath(t, "02_multi_sentence")
@@ -909,7 +909,7 @@ func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
 }
 
 func TestUI_PhotoIngest_OCRFail_ErrorVisible_QueueUnchanged(t *testing.T) {
-	// Fail via test double; queue stays empty. (Real CLI fail covered in L1/L2 with MustEngine.)
+	// Fail via test double; queue stays empty. (Real engine fail covered in L1/L2 with MustEngine.)
 	base, shutdown := startServerWith(t, ocr.Static{Err: fmt.Errorf("ocr boom")})
 	t.Cleanup(shutdown)
 	imgPath := fixtureImagePath(t, "19_not_an_image")

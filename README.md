@@ -21,7 +21,7 @@ License: [MIT](LICENSE)
 8. [Stepped setup](#stepped-setup)
 9. [Phone on LAN (step-by-step)](#phone-on-lan-step-by-step)
 10. [Configuration](#configuration)
-11. [OCR (Tesseract)](#ocr-tesseract)
+11. [OCR (NDLOCR-Lite)](#ocr-ndlocr-lite)
 12. [Daily use walkthrough](#daily-use-walkthrough)
 13. [Testing](#testing)
 14. [Tickets](#tickets)
@@ -48,7 +48,7 @@ flowchart LR
     H[httpapi Fiber]
     M[MiningApp]
     Q[(queue.json)]
-    T[Tesseract CLI]
+    T[NDLOCR-Lite worker]
   end
   B -->|LAN HTTP| H
   H --> M
@@ -81,7 +81,7 @@ flowchart TB
     A1[pinauth.Static]
     A2[analyzer.Stub]
     A3[queuestore.File / Mem]
-    A4[ocr.Tesseract / Static]
+    A4[ocr.NDL / Static]
   end
   F --> UC
   TPL --> F
@@ -98,7 +98,7 @@ flowchart TB
 | HTTP adapter | `internal/httpapi` | Cookies, multipart, HTMX partials, status ↔ product errors |
 | Facade | `internal/app` | All product rules (C1: new use-cases land here first) |
 | Ports | `internal/ports` | Small interfaces only |
-| Adapters | `internal/adapters/*` | PIN, analyzer stub, file/mem queue, Tesseract / Static OCR |
+| Adapters | `internal/adapters/*` | PIN, analyzer stub, file/mem queue, NDLOCR-Lite / Static OCR |
 | Web | `web/` | Embedded templates + HTMX + camera JS |
 
 **Architectural rule (C1):** if a rule can be unit-tested without HTTP, it belongs on **MiningApp**, not in a handler body.
@@ -188,7 +188,9 @@ internal/app/                 # MiningApp facade (primary test seam)
 internal/ports/               # PinAuth, JapaneseAnalyzer, QueueStore, OcrEngine
 internal/adapters/pinauth/    # static shared PIN
 internal/adapters/analyzer/   # Stub JapaneseAnalyzer (fixtures + fallback)
-internal/adapters/ocr/        # Tesseract (prod) + Static (tests)
+internal/adapters/ocr/        # NDL / NDLOCR-Lite (prod) + Static (tests)
+scripts/ndl_ocr_worker.py     # long-lived Python worker for NDLOCR-Lite
+requirements-ocr.txt          # Python deps for the OCR worker venv
 internal/adapters/queuestore/ # file + mem QueueStore
 internal/httpapi/             # Fiber + session + handlers
 internal/ocrtest/             # OCR fixture loader (tests)
@@ -232,11 +234,15 @@ All mining routes require session except `/` and `POST /unlock`.
 
 ## Quick start (PC)
 
-**Prerequisites:** Go 1.22+ (see `go.mod`), and for photo OCR: Tesseract + Japanese data (see [OCR](#ocr-tesseract)).
+**Prerequisites:** Go 1.22+ (see `go.mod`), and for photo OCR: NDLOCR-Lite + Python 3.12 (see [OCR](#ocr-ndlocr-lite)).
 
 ```bash
 git clone <repo-url> && cd miner
 export MINER_PIN='choose-a-shared-pin'
+# after OCR install (see stepped setup):
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
+export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
 make run
 # open http://127.0.0.1:8080
 ```
@@ -258,23 +264,25 @@ git clone <repo-url>
 cd miner
 ```
 
-### 3. (Recommended) Install Tesseract for photo / camera mining
+### 3. Install NDLOCR-Lite for photo / camera mining
 
-Without Tesseract the server **will not start** (production requires a real OCR engine).
-
-```bash
-# Debian / Ubuntu
-sudo apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert
-
-# Verify
-tesseract --list-langs | grep jpn
-```
-
-macOS (Homebrew) example:
+Without NDLOCR-Lite the server **will not start** (production requires a real local OCR engine).
 
 ```bash
-brew install tesseract tesseract-lang
+# Clone NDL Lab NDLOCR-Lite (models included in repo)
+git clone https://github.com/ndl-lab/ndlocr-lite ~/src/ndlocr-lite
+
+# Python 3.12 venv (3.14 may not have onnxruntime wheels)
+# using uv (recommended) or python3.12 -m venv
+uv venv ~/src/ndlocr-lite/.venv --python 3.12
+uv pip install --python ~/src/ndlocr-lite/.venv/bin/python -r requirements-ocr.txt
+
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
+export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
 ```
+
+**Credit:** OCR uses [NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite) by 国立国会図書館 NDL Lab (CC BY 4.0).
 
 ### 4. Choose a PIN (required)
 
@@ -291,7 +299,7 @@ make run
 # go run ./cmd/miner
 ```
 
-On success you should see logs like:
+On success you should see logs like (first boot waits while the OCR worker loads models):
 
 ```text
 Dev: http://127.0.0.1:8080
@@ -299,6 +307,8 @@ LAN: open http://<this-pc-ip>:8080 from your phone on the same Wi‑Fi
   try http://192.168.x.x:8080
 miner listening on :8080 (queue=data/queue.json)
 ```
+
+If startup fails with `OCR engine: …`, fix `MINER_NDL_ROOT` / `MINER_NDL_PYTHON` / `MINER_NDL_WORKER` (see [OCR](#ocr-ndlocr-lite)).
 
 ### 6. Open on the PC first
 
@@ -423,6 +433,8 @@ HTTPS is not required for many phones on LAN, but some browsers are stricter abo
 | No LAN IP in logs | PC offline / only loopback; connect Wi‑Fi or set `MINER_ADDR` |
 | Camera blocked | Use upload; or try another browser; check site permissions |
 | OCR empty / garbage | Better photo, fill frame, less tilt; edit sentence; paste text fallback |
+| Server dies at start with “OCR engine” | `MINER_NDL_ROOT` / python / worker wrong — see [OCR](#ocr-ndlocr-lite) |
+| First photo very slow | Normal: models warm on process start; later pages should be faster |
 
 ---
 
@@ -434,9 +446,11 @@ HTTPS is not required for many phones on LAN, but some browsers are stricter abo
 | `MINER_ADDR` | no | `:8080` | Listen address (`:8080` = all interfaces) |
 | `MINER_WEB_ROOT` | no | *(embedded)* | Disk override of `templates/` + `static/` |
 | `MINER_DATA_DIR` | no | `data` | Durable queue directory (`queue.json`) |
-| `MINER_TESSERACT` | no | `tesseract` on `PATH` | Tesseract binary |
-| `MINER_TESSDATA_PREFIX` | no | (engine default) | Tessdata dir (`jpn` / `jpn_vert`) |
-| `MINER_OCR_LANG` | no | `jpn+jpn_vert` | Tesseract `-l` string |
+| `MINER_NDL_ROOT` | **yes** (prod) | — | Absolute path to [ndlocr-lite](https://github.com/ndl-lab/ndlocr-lite) clone |
+| `MINER_NDL_PYTHON` | recommended | `python3` | Venv interpreter with `requirements-ocr.txt` deps |
+| `MINER_NDL_WORKER` | recommended | auto-discover `scripts/ndl_ocr_worker.py` | Path to miner’s worker script |
+| `MINER_NDL_DEVICE` | no | `cpu` | `cpu` or `cuda` (GPU needs onnxruntime-gpu + CUDA) |
+| `MINER_NDL_ENABLE_TCY` | no | off | `1` / `true` enables 縦中横 helper in the worker |
 
 Example full launch:
 
@@ -444,41 +458,135 @@ Example full launch:
 export MINER_PIN='household-pin'
 export MINER_ADDR=:8080
 export MINER_DATA_DIR="$HOME/.local/share/miner"
-export MINER_TESSERACT=/usr/bin/tesseract
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
+export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
 make run
 ```
 
 ---
 
-## OCR (Tesseract)
+## OCR (NDLOCR-Lite)
 
-Production wires `internal/adapters/ocr.Tesseract` (CLI, no CGO).
+Production photo / camera ingest uses **[NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite)** (国立国会図書館 NDL Lab) — a CPU-friendly Japanese book/magazine OCR stack with layout detection, character recognition, and **reading-order** (縦書き columns right→left). **No Tesseract. No cloud OCR.**
+
+### How miner wires it
+
+```text
+Phone photo / upload
+  → POST /ingest (httpapi)
+  → MiningApp.IngestPage
+  → ports.OcrEngine.Recognize(ctx, image bytes)
+  → adapters/ocr.NDL  (Go)
+       writes temp image
+       JSON line → scripts/ndl_ocr_worker.py (long-lived Python)
+       ← plain text (trim only)
+  → NormalizePageText → SplitSentences → candidates HTML
+```
+
+| Piece | Role |
+|-------|------|
+| `internal/ports.OcrEngine` | Small seam: `Recognize(ctx, image) → text` |
+| `internal/adapters/ocr.NDL` | Prod adapter: starts/owns worker, honors cancel/deadline |
+| `internal/adapters/ocr.Static` | Test double (default L1/L2/L3 — no Python needed) |
+| `scripts/ndl_ocr_worker.py` | Loads ONNX models **once**, then answers JSON requests |
+| `requirements-ocr.txt` | Python pins for the worker venv (install into NDL’s venv) |
+
+Worker protocol (one JSON object per line):
+
+```json
+{"id":"1","image_path":"/tmp/miner-ocr-xxx.png"}
+{"id":"1","ok":true,"text":"病院に行った。\n私は本を読む。"}
+```
+
+On startup the worker emits `{"ready":true}` after models load; miner waits (default up to 120s) before accepting traffic that needs OCR.
+
+**Product hygiene stays in MiningApp:** inter-CJK space strip and blank-line collapse via `NormalizePageText`. The adapter returns engine text only.
+
+### Install (home PC, CPU)
+
+Needs **Python 3.12** (or 3.11). System Python 3.14 often lacks `onnxruntime` wheels — use [uv](https://github.com/astral-sh/uv) or a 3.12 venv.
 
 ```bash
-# Debian/Ubuntu
-sudo apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert
+# 1) NDLOCR-Lite (models live under src/model/*.onnx — not vendored into miner)
+git clone https://github.com/ndl-lab/ndlocr-lite ~/src/ndlocr-lite
 
-# Custom install
-export MINER_TESSERACT=/path/to/tesseract
-export MINER_TESSDATA_PREFIX=/path/to/tessdata   # contains jpn.traineddata
+# 2) Venv + deps (from the miner repo root)
+cd /path/to/miner
+uv venv ~/src/ndlocr-lite/.venv --python 3.12
+uv pip install --python ~/src/ndlocr-lite/.venv/bin/python -r requirements-ocr.txt
+
+# 3) Point miner at the install
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
+export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
+export MINER_PIN='your-shared-pin'
+make run
 ```
+
+Without `pip`/`uv`, the same deps are listed in upstream `ndlocr-lite/requirements.txt` (includes GUI extras you can skip). Prefer miner’s `requirements-ocr.txt` for a lean worker-only install.
+
+**Verify worker alone** (optional):
+
+```bash
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+~/src/ndlocr-lite/.venv/bin/python scripts/ndl_ocr_worker.py
+# expect one line: {"ready": true}
+# then type (example): {"id":"1","image_path":"testdata/ocr/images/01_single_sentence.png"}
+# Ctrl+D to exit
+```
+
+### Product rules (ingest)
 
 | Rule | Behavior |
 |------|----------|
 | Max image size | 10 MiB (`app.MaxUploadBytes`) |
+| Timeout | `MaxIngestDuration` (60s) on parent context |
 | Single-flight | One ingest at a time (`409` if busy) |
 | Queue on OCR fail | Untouched |
-| Image persistence | Never written under data dir |
-| Product normalize | `NormalizePageText` in MiningApp (not in Tesseract) |
+| Image persistence | Never written under data dir (temp file only, deleted after OCR) |
+| Empty OCR text | `ErrEmptyPage` after normalize |
+| Cancel mid-OCR | `ErrIngestCanceled` |
 
-**Tests:** default harnesses use `ocr.Static` (no host tesseract). Real CLI tests call `ocr.MustEngine` and **skip** if missing.
+### Performance notes
+
+| Phase | What to expect |
+|-------|----------------|
+| Process start | Worker loads ONNX models (~several seconds on CPU) |
+| Warm page | Often ~1–few seconds for a simple novel crop |
+| Cold first request | If worker not pre-started, first recognize pays model load |
+
+Miner starts the worker in `NewNDLFromEnv()` at boot so the first phone shot is usually warm.
+
+### Attribution & license
+
+OCR models and code: **[NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite)** by [NDL Lab](https://lab.ndl.go.jp/) / 国立国会図書館, licensed **CC BY 4.0**.  
+Miner (this repo) remains **MIT**; keep NDL credit when you redistribute the OCR stack.
+
+### OCR tests
+
+| Kind | When | How |
+|------|------|-----|
+| Default suite | Always | `ocr.Static` — `make test` needs **no** Python/models |
+| Fake worker | Always | Go unit tests drive a stub Python script (protocol only) |
+| Real smoke | Host with `MINER_NDL_*` | `go test ./internal/adapters/ocr/ -run Smoke` |
+| Contract | Optional | `make ocr-contract` or `MINER_OCR_CONTRACT=1` |
 
 ```bash
-export MINER_OCR_CONTRACT=1
-go test ./internal/adapters/ocr/ -count=1 -run Contract -timeout 5m
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
+export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
+
+# smoke (skips if env missing)
+go test ./internal/adapters/ocr/ -count=1 -run 'Smoke' -timeout 3m -v
+
+# full fixture contract (happy / vertical / blur / brightness / font / …)
+make ocr-contract
+# equivalent:
+# MINER_OCR_CONTRACT=1 go test ./internal/adapters/ocr/ -run Contract -count=1 -timeout 15m -v
 ```
 
-Fixtures: `testdata/ocr/` (55 cases). Tags include **happy**, **vertical**, **blur**, **brightness**, **font**, etc.
+Fixtures: `testdata/ocr/` (55 cases). Tags: **happy**, **vertical**, **novel**, **blur**, **brightness**, **font**, **thickness**, **colour**, **tilt**, etc. Soft (log-only) IDs for known-hard phone stress live in `internal/adapters/ocr/ndl_test.go`.
 
 ---
 
@@ -509,9 +617,10 @@ Export shape (nested list, order by first-unknown-at):
 ## Testing
 
 ```bash
-make test          # L1 + L2 + L3
+make test          # L1 + L2 + L3 (no NDLOCR-Lite required)
 make test-unit     # internal packages only
 make test-e2e      # headless browser only
+make ocr-contract  # real NDLOCR-Lite fixtures (needs MINER_NDL_*)
 make lint          # vet + staticcheck + ineffassign + deadcode
 ```
 
@@ -520,7 +629,7 @@ make lint          # vet + staticcheck + ineffassign + deadcode
 | **L1** | `internal/app` | Product rules via MiningApp (fakes + mem/file store + `ocr.Static`) |
 | **L2** | `internal/httpapi` | Fiber `app.Test`: session, HTMX, multipart, pass transport |
 | **L3** | `e2e` | rod + Chromium: PIN → ingest paths → mark → export → clear |
-| **OCR-real** | selected | `MustEngine`; skips without tesseract |
+| **OCR-real** | selected | `MustEngine` / smoke + contract; skips without NDLOCR-Lite env |
 
 L3 downloads Chromium once into `~/.cache/rod`.  
 HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not hang offline.
@@ -557,6 +666,13 @@ HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not han
 - No new routes or MiningApp rules.  
 - Permission denied / no camera → in-page message; upload remains.
 
+### Photo OCR (NDLOCR-Lite)
+
+- Prod engine: `ocr.NDL` + `scripts/ndl_ocr_worker.py` (not Tesseract).  
+- Tuned for Japanese printed books / 縦書き; phone photos are best-effort (tilt, blur, mixed light).  
+- Paste path (`POST /page-text`) still works with no OCR install for pure text mining.  
+- See [OCR (NDLOCR-Lite)](#ocr-ndlocr-lite) for install, env, and contract tests.
+
 ### Unknowns + queue
 
 - Analyze alone does **not** write the queue.  
@@ -575,15 +691,18 @@ HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not han
 
 | Target | Action |
 |--------|--------|
-| `make run` | Build + run (needs `MINER_PIN`) |
+| `make run` | Build + run (needs `MINER_PIN` + `MINER_NDL_*` for OCR) |
 | `make build` | `bin/miner` |
-| `make test` | Full suite (120s timeout) |
+| `make test` | Full suite (120s timeout; `ocr.Static` only) |
 | `make test-unit` | `./internal/...` |
 | `make test-e2e` | `./e2e/...` |
+| `make ocr-contract` | Real NDLOCR-Lite contract suites (`MINER_OCR_CONTRACT=1`) |
 | `make lint` | static analysis helpers |
 
 ---
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2026 Riki
+[MIT](LICENSE) — Copyright (c) 2026 Riki  
+
+Local OCR uses **[NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite)** (国立国会図書館 NDL Lab), **CC BY 4.0**. Models and the NDLOCR-Lite tree are installed separately; they are not re-licensed by this MIT project.

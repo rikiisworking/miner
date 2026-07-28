@@ -26,7 +26,7 @@ import (
 	"github.com/rikiisworking/miner/web"
 )
 
-// defaultTestOCR keeps non-OCR L2 tests free of a host tesseract install.
+// defaultTestOCR keeps non-OCR L2 tests free of a host NDLOCR-Lite install.
 var defaultTestOCR = ocr.Static{Text: "病院に行った。\n私は本を読む。"}
 
 func newTestServer(t *testing.T) *httpapi.Server {
@@ -975,7 +975,7 @@ func multipartIngest(t *testing.T, filename string, image []byte) *http.Request 
 }
 
 func TestIngest_Authenticated_StaticEngine_ReturnsCandidates(t *testing.T) {
-	// Transport + MiningApp candidate path without host tesseract.
+	// Transport + MiningApp candidate path without host NDLOCR-Lite.
 	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), defaultTestOCR)
 	cookies := unlockCookies(t, s)
 
@@ -1007,7 +1007,7 @@ func TestIngest_Authenticated_StaticEngine_ReturnsCandidates(t *testing.T) {
 }
 
 func TestIngest_Authenticated_TinyFixture_ReturnsCandidates(t *testing.T) {
-	// Real tesseract path — host install required (MustEngine fatals if missing).
+	// Real NDLOCR-Lite path — host install required (MustEngine skips if missing).
 	manifest, err := ocrtest.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -1108,7 +1108,7 @@ func TestIngest_OCRFailure_QueueIntact(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Fail via test double — no host tesseract required.
+	// Fail via test double — no host NDLOCR-Lite required.
 	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.Static{Err: errors.New("ocr boom")})
 	cookies := unlockCookies(t, s)
 

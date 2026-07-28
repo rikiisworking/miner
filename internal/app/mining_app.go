@@ -57,7 +57,7 @@ type MiningApp struct {
 }
 
 // NewMiningApp constructs the facade with required ports.
-// ocr must be non-nil (production: adapters/ocr.Tesseract).
+// ocr must be non-nil (production: adapters/ocr.NDL / NDLOCR-Lite).
 // Nil ports panic — use errors only for recoverable config at HTTP layer.
 func NewMiningApp(pinAuth ports.PinAuth, analyzer ports.JapaneseAnalyzer, queue ports.QueueStore, ocr ports.OcrEngine) *MiningApp {
 	if pinAuth == nil {

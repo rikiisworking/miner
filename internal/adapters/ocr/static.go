@@ -7,7 +7,7 @@ import (
 )
 
 // Static is a fixed-response OcrEngine for tests and harnesses that do not need
-// a host tesseract install. Production wires Tesseract via NewTesseractFromEnv.
+// a host NDLOCR-Lite install. Production wires NDL via NewNDLFromEnv.
 //
 // When Err is non-nil, Recognize returns that error and ignores Text.
 // Otherwise Recognize returns Text for any image payload (including empty),

@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/ocr"
@@ -79,43 +77,4 @@ func resolveWebFS() (fs.FS, error) {
 		return os.DirFS(root), nil
 	}
 	return web.FS(), nil
-}
-
-func logLANHints(addr string) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		// addr might be ":8080"
-		if strings.HasPrefix(addr, ":") {
-			port = strings.TrimPrefix(addr, ":")
-			host = ""
-		} else {
-			return
-		}
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		fmt.Fprintf(os.Stderr, "LAN: open http://<this-pc-ip>:%s from your phone on the same Wi‑Fi\n", port)
-		ifaces, _ := net.Interfaces()
-		for _, iface := range ifaces {
-			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-				continue
-			}
-			addrs, _ := iface.Addrs()
-			for _, a := range addrs {
-				var ip net.IP
-				switch v := a.(type) {
-				case *net.IPNet:
-					ip = v.IP
-				case *net.IPAddr:
-					ip = v.IP
-				}
-				if ip == nil || ip.IsLoopback() {
-					continue
-				}
-				if v4 := ip.To4(); v4 != nil {
-					fmt.Fprintf(os.Stderr, "  try http://%s:%s\n", v4.String(), port)
-				}
-			}
-		}
-		fmt.Fprintf(os.Stderr, "Dev: http://127.0.0.1:%s\n", port)
-	}
 }

@@ -283,12 +283,60 @@ func TestUI_Analyze_ForceError_ShowsMessage(t *testing.T) {
 		html, _ := page.HTML()
 		t.Fatalf("analyze-error missing: %v\nhtml=%s", err, html)
 	}
-	if txt, _ := el.Text(); txt == "" {
+	txt, _ := el.Text()
+	if txt == "" {
 		t.Fatal("expected analyze error text")
+	}
+	// Phone-readable: explain failure + next step.
+	if !strings.Contains(txt, "could not be tokenized") || !strings.Contains(strings.ToLower(txt), "edit") {
+		t.Fatalf("analyze error not actionable enough: %q", txt)
 	}
 	has, _, _ := page.Has(`[data-testid="analyze-success"]`)
 	if has {
 		t.Fatal("analyze-success must not show on forced error")
+	}
+}
+
+func TestUI_Queue_EmptyState_Visible(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-page"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-page missing: %v\nhtml=%s", err, html)
+	}
+	empty, err := page.Timeout(5 * time.Second).Element(`[data-testid="queue-empty"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-empty missing: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := empty.Text(); !strings.Contains(strings.ToLower(txt), "empty") {
+		t.Fatalf("empty copy=%q", txt)
+	}
+	clearBtn, err := page.Timeout(5 * time.Second).Element(`[data-testid="clear-all"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := clearBtn.Property("disabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !disabled.Bool() {
+		t.Fatal("clear-all should be disabled on empty queue")
+	}
+	// Export still available when empty
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="export-markdown"]`); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -889,8 +937,17 @@ func TestUI_PhotoIngest_OCRFail_ErrorVisible_QueueUnchanged(t *testing.T) {
 		html, _ := page.HTML()
 		t.Fatalf("OCR error missing: %v\nhtml=%s", err, html)
 	}
-	if txt, _ := el.Text(); txt == "" {
+	txt, _ := el.Text()
+	if txt == "" {
 		t.Fatal("expected OCR error text")
+	}
+	// Phone-readable: OCR failure + retake or paste fallback.
+	lower := strings.ToLower(txt)
+	if !strings.Contains(lower, "could not read") && !strings.Contains(lower, "no text found") {
+		t.Fatalf("OCR error not clear: %q", txt)
+	}
+	if !strings.Contains(lower, "paste") && !strings.Contains(lower, "retake") && !strings.Contains(lower, "photo") {
+		t.Fatalf("OCR error missing next step: %q", txt)
 	}
 
 	// Queue empty state unchanged
@@ -904,5 +961,171 @@ func TestUI_PhotoIngest_OCRFail_ErrorVisible_QueueUnchanged(t *testing.T) {
 	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-empty"]`); err != nil {
 		html, _ := page.HTML()
 		t.Fatalf("queue should stay empty after OCR fail: %v\nhtml=%s", err, html)
+	}
+}
+
+// TestUI_ShipGate_PhotoUpload_Export_ClearAll is the ticket-08 end-to-end ship gate:
+// PIN → upload fixture → pick → analyze → mark → export (queue remains) → Clear all → empty.
+func TestUI_ShipGate_PhotoUpload_Export_ClearAll(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+	imgPath := fixtureImagePath(t, "02_multi_sentence")
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	input, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-input"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := input.SetFiles([]string{imgPath}); err != nil {
+		t.Fatalf("set photo file: %v", err)
+	}
+	submit, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-submit"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := submit.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(15 * time.Second).Element(`[data-testid="sentence-candidates"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("candidates: %v\nhtml=%s", err, html)
+	}
+
+	pick, err := page.Timeout(5 * time.Second).Element(`[data-testid="candidate-pick"][data-index="0"]`)
+	if err != nil {
+		picks, err2 := page.Elements(`[data-testid="candidate-pick"]`)
+		if err2 != nil || len(picks) == 0 {
+			html, _ := page.HTML()
+			t.Fatalf("candidate-pick missing: %v\nhtml=%s", err, html)
+		}
+		pick = picks[0]
+	}
+	if err := pick.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("analyze: %v\nhtml=%s", err, html)
+	}
+
+	words, err := page.Elements(`[data-testid="mark-unknown"]`)
+	if err != nil || len(words) == 0 {
+		html, _ := page.HTML()
+		t.Fatalf("no mark-unknown\nhtml=%s", html)
+	}
+	surfaceAttr, err := words[0].Attribute("data-surface")
+	if err != nil || surfaceAttr == nil || *surfaceAttr == "" {
+		t.Fatal("mark-unknown missing data-surface")
+	}
+	surface := *surfaceAttr
+	if err := words[0].Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	fb, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="saved"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("save feedback: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := fb.Text(); !strings.Contains(txt, surface) {
+		t.Fatalf("feedback=%q surface=%q", txt, surface)
+	}
+
+	// Duplicate second tap — feedback must stay obvious.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		el, err := page.Element(`[data-testid="entry-id"]`)
+		if err == nil {
+			v, err := el.Property("value")
+			if err == nil && v.Str() != "" {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	clickMarkUnknown(t, page, surface)
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="duplicate"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("duplicate feedback: %v\nhtml=%s", err, html)
+	}
+
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-entry"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-entry: %v\nhtml=%s", err, html)
+	}
+
+	exportLink, err := page.Timeout(5 * time.Second).Element(`[data-testid="export-markdown"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	href, err := exportLink.Attribute("href")
+	if err != nil || href == nil || *href == "" {
+		t.Fatalf("export href missing: %v %v", href, err)
+	}
+	result, err := page.Eval(`async (url) => {
+		const r = await fetch(url, { credentials: 'same-origin' });
+		const text = await r.text();
+		return { status: r.status, type: r.headers.get('content-type') || '', text: text };
+	}`, *href)
+	if err != nil {
+		t.Fatalf("export fetch: %v", err)
+	}
+	if int(result.Value.Get("status").Num()) != 200 {
+		t.Fatalf("export status=%v", result.Value.Get("status"))
+	}
+	if !strings.Contains(result.Value.Get("type").Str(), "markdown") {
+		t.Fatalf("content-type=%q", result.Value.Get("type").Str())
+	}
+	md := result.Value.Get("text").Str()
+	if !strings.Contains(md, surface) {
+		t.Fatalf("export missing surface %q body=%q", surface, md)
+	}
+
+	// Export must leave queue intact.
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="queue-entry"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue gone after export: %v\nhtml=%s", err, html)
+	}
+
+	waitDialog, handleDialog := page.MustHandleDialog()
+	btn, err := page.Timeout(5 * time.Second).Element(`[data-testid="clear-all"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = btn.Click(proto.InputMouseButtonLeft, 1)
+	}()
+	waitDialog()
+	handleDialog(true, "")
+
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-empty"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-empty after clear: %v\nhtml=%s", err, html)
+	}
+	entries, err := page.Elements(`[data-testid="queue-entry"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries after clear=%d", len(entries))
+	}
+	clearBtn, err := page.Timeout(5 * time.Second).Element(`[data-testid="clear-all"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := clearBtn.Property("disabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !disabled.Bool() {
+		t.Fatal("clear-all should be disabled when empty")
 	}
 }

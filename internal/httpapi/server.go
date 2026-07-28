@@ -169,7 +169,11 @@ func (s *Server) unlockAllowed(ip string) bool {
 			kept = append(kept, t)
 		}
 	}
-	s.unlockFails[ip] = kept
+	if len(kept) == 0 {
+		delete(s.unlockFails, ip)
+	} else {
+		s.unlockFails[ip] = kept
+	}
 	return len(kept) < unlockMaxFails
 }
 

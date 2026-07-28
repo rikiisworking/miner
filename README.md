@@ -98,7 +98,7 @@ flowchart TB
 | HTTP adapter | `internal/httpapi` | Cookies, multipart, HTMX partials, status ↔ product errors |
 | Facade | `internal/app` | All product rules (C1: new use-cases land here first) |
 | Ports | `internal/ports` | Small interfaces only |
-| Adapters | `internal/adapters/*` | PIN, analyzer stub, file/mem queue, NDLOCR-Lite / Static OCR |
+| Adapters | `internal/adapters/*` | PIN, Kagome / Stub analyzer, file/mem queue, NDLOCR-Lite / Static OCR |
 | Web | `web/` | Embedded templates + HTMX + camera JS |
 
 **Architectural rule (C1):** if a rule can be unit-tested without HTTP, it belongs on **MiningApp**, not in a handler body.

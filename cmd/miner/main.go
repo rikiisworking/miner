@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/ocr"
@@ -67,10 +70,31 @@ func main() {
 		log.Fatalf("http server: %v", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	logLANHints(addr)
 	log.Printf("miner listening on %s (queue=%s)", addr, queuePath)
-	if err := srv.Listen(); err != nil {
-		log.Fatal(err)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Listen()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			log.Fatal(err)
+		}
+	case <-ctx.Done():
+		log.Printf("shutdown signal received")
+		stop()
+		if err := srv.Shutdown(); err != nil {
+			log.Printf("http shutdown: %v", err)
+		}
+		if err := <-errCh; err != nil {
+			log.Printf("listen: %v", err)
+		}
 	}
 }
 

@@ -1,19 +1,29 @@
 package analyzer_test
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/ports"
 )
 
+var (
+	sharedKagome     *analyzer.Kagome
+	sharedKagomeOnce sync.Once
+	sharedKagomeErr  error
+)
+
 func mustKagome(t *testing.T) *analyzer.Kagome {
 	t.Helper()
-	k, err := analyzer.NewKagome()
-	if err != nil {
-		t.Fatalf("NewKagome: %v", err)
+	sharedKagomeOnce.Do(func() {
+		sharedKagome, sharedKagomeErr = analyzer.NewKagome()
+	})
+	if sharedKagomeErr != nil {
+		t.Fatalf("NewKagome: %v", sharedKagomeErr)
 	}
-	return k
+	return sharedKagome
 }
 
 func TestKagome_DemoSentenceBook(t *testing.T) {
@@ -117,6 +127,104 @@ func TestKagome_ParticleAndAuxDroppedFromContent(t *testing.T) {
 		if tok.Surface == "た" && tok.Content {
 			t.Fatalf("auxiliary た must be non-content: %+v", toks)
 		}
+	}
+}
+
+func TestKagome_Analyze_NotInitialized(t *testing.T) {
+	var nilK *analyzer.Kagome
+	if _, err := nilK.Analyze("私は本を読む。"); err == nil {
+		t.Fatal("nil receiver: expected error, no panic")
+	}
+	zero := &analyzer.Kagome{}
+	if _, err := zero.Analyze("私は本を読む。"); err == nil {
+		t.Fatal("zero Kagome: expected error, no panic")
+	}
+}
+
+func TestKagome_PureKanaSurface_EmptyReading(t *testing.T) {
+	// Pure-kana content surfaces must not carry furigana (ruby is noise).
+	toks, err := mustKagome(t).Analyze("する")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tok := range toks {
+		if tok.Surface == "する" {
+			found = true
+			if !tok.Content {
+				t.Fatalf("する should be content: %+v", toks)
+			}
+			if tok.Reading != "" {
+				t.Fatalf("pure-kana surface Reading=%q want empty", tok.Reading)
+			}
+		}
+		if tok.Content && tok.Reading != "" {
+			// Any pure-kana content token in this input must also be empty.
+			allKana := true
+			for _, r := range tok.Surface {
+				if r < 'ぁ' || (r > 'ん' && r < 'ァ') || r > 'ン' {
+					if r != 'ー' && r != 'ゔ' && r != 'ヴ' {
+						allKana = false
+						break
+					}
+				}
+			}
+			if allKana && tok.Reading != "" {
+				t.Fatalf("pure-kana content %q Reading=%q want empty", tok.Surface, tok.Reading)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("surface する not found: %+v", toks)
+	}
+}
+
+func TestKagome_MatchesStubFixtureSurfaces_DemoSentences(t *testing.T) {
+	k := mustKagome(t)
+	stub := analyzer.Stub{}
+	for _, text := range []string{"私は本を読む。", "病院に行った。"} {
+		want, err := stub.Analyze(text)
+		if err != nil {
+			t.Fatalf("stub %q: %v", text, err)
+		}
+		got, err := k.Analyze(text)
+		if err != nil {
+			t.Fatalf("kagome %q: %v", text, err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%q: len got=%d want=%d\n got=%+v\nwant=%+v", text, len(got), len(want), got, want)
+		}
+		for i := range want {
+			if got[i].Surface != want[i].Surface {
+				t.Fatalf("%q tok[%d].Surface got=%q want=%q", text, i, got[i].Surface, want[i].Surface)
+			}
+		}
+	}
+}
+
+func TestKagome_ConcurrentAnalyze(t *testing.T) {
+	k := mustKagome(t)
+	const n = 32
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			toks, err := k.Analyze("私は本を読む。")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if len(toks) != 6 {
+				errCh <- fmt.Errorf("unexpected token count %d", len(toks))
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
 	}
 }
 

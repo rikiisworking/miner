@@ -24,7 +24,8 @@ import (
 )
 
 // defaultE2EOCR: multi-sentence text so photo + page-text journeys work without
-// host NDLOCR-Lite. Real engine only where a test calls startServerWith + MustEngine.
+// host NDLOCR-Lite. E2E uses Static (or other injectables via startServerWith); real
+// NDLOCR-Lite is covered in L1/L2 via ocr.MustEngine, not this package.
 var defaultE2EOCR ports.OcrEngine = ocr.Static{Text: "病院に行った。\n私は本を読む。"}
 
 func startServer(t *testing.T) (baseURL string, shutdown func()) {

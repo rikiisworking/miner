@@ -68,11 +68,26 @@ func TestNDL_Cancel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cancel/deadline")
 	}
+	// After join-on-cancel fix, cancel path must surface context error (not
+	// the late worker success). Worker may still finish after cancel.
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		// May also surface as recognize failed if worker races; accept cancel family.
-		if !errors.Is(err, ocr.ErrRecognizeFailed) {
-			t.Fatalf("got %v", err)
+		t.Fatalf("got %v want context deadline/canceled", err)
+	}
+
+	// Critical: after cancel returns, mutex must be free so a second Recognize
+	// does not hang (P0: early return left recognizePath holding n.mu).
+	done := make(chan error, 1)
+	go func() {
+		_, err := eng.Recognize(context.Background(), png1x1())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("second Recognize after cancel: %v", err)
 		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("second Recognize after cancel hung (mutex not released?)")
 	}
 }
 

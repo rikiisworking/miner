@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -19,10 +20,16 @@ type Kagome struct {
 
 // NewKagome builds a tokenizer with the embedded IPA dictionary.
 // Safe to share across goroutines after construction (Tokenize is concurrent-safe).
-func NewKagome() (*Kagome, error) {
+func NewKagome() (k *Kagome, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			k = nil
+			err = fmt.Errorf("kagome: init tokenizer: panic: %v", r)
+		}
+	}()
 	tok, err := tokenizer.New(ipa.Dict(), tokenizer.OmitBosEos())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("kagome: init tokenizer: %w", err)
 	}
 	return &Kagome{tok: tok}, nil
 }
@@ -102,6 +109,10 @@ func katakanaToHiragana(s string) string {
 			b.WriteRune(r - 0x60)
 		case r == 'ヴ':
 			b.WriteRune('ゔ')
+		case r == 'ヵ':
+			b.WriteRune('か')
+		case r == 'ヶ':
+			b.WriteRune('け')
 		default:
 			b.WriteRune(r)
 		}

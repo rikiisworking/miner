@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -95,6 +96,7 @@ func New(cfg Config) (*Server, error) {
 	f.Post("/unlock", s.handleUnlock)
 	f.Get("/home", s.requireAuth, s.handleHome)
 	f.Post("/page-text", s.requireAuth, s.handlePageText)
+	f.Post("/ingest", s.requireAuth, s.handleIngest)
 	f.Post("/analyze", s.requireAuth, s.handleAnalyze)
 	f.Post("/unknowns", s.requireAuth, s.handleAddUnknown)
 	f.Get("/queue", s.requireAuth, s.handleQueue)
@@ -175,6 +177,83 @@ func (s *Server) handlePageText(c *fiber.Ctx) error {
 	return s.render(c, "sentence_candidates", map[string]any{
 		"Error":      "",
 		"Candidates": cands,
+	})
+}
+
+// handleIngest runs photo OCR via MiningApp.IngestPage (ticket 06).
+// Multipart field "image". Image bytes are not saved to disk; discarded after return.
+// Reuses sentence_candidates partial (same pick → analyze pipeline as page-text).
+func (s *Server) handleIngest(c *fiber.Ctx) error {
+	fh, err := c.FormFile("image")
+	if err != nil || fh == nil {
+		c.Status(fiber.StatusBadRequest)
+		return s.render(c, "sentence_candidates", map[string]any{
+			"Error":      "Choose an image of a novel page.",
+			"Candidates": nil,
+		})
+	}
+	// Header size is a cheap pre-check; MiningApp still enforces MaxUploadBytes on bytes.
+	if fh.Size > app.MaxUploadBytes {
+		c.Status(fiber.StatusRequestEntityTooLarge)
+		return s.render(c, "sentence_candidates", map[string]any{
+			"Error":      "Image too large (max 10 MB).",
+			"Candidates": nil,
+		})
+	}
+
+	f, err := fh.Open()
+	if err != nil {
+		c.Status(fiber.StatusBadRequest)
+		return s.render(c, "sentence_candidates", map[string]any{
+			"Error":      "Could not read the uploaded image.",
+			"Candidates": nil,
+		})
+	}
+	defer f.Close()
+
+	// Cap read so a lying Content-Length cannot blow memory past product + 1.
+	image, err := io.ReadAll(io.LimitReader(f, int64(app.MaxUploadBytes)+1))
+	if err != nil {
+		c.Status(fiber.StatusBadRequest)
+		return s.render(c, "sentence_candidates", map[string]any{
+			"Error":      "Could not read the uploaded image.",
+			"Candidates": nil,
+		})
+	}
+
+	ingested, err := s.app.IngestPage(image)
+	// Drop reference so large payloads can be GC'd after OCR (caller contract).
+	image = nil
+	if err != nil {
+		return s.renderIngestError(c, err)
+	}
+	return s.render(c, "sentence_candidates", map[string]any{
+		"Error":      "",
+		"Candidates": ingested.Candidates,
+	})
+}
+
+func (s *Server) renderIngestError(c *fiber.Ctx, err error) error {
+	msg := "Could not read text from the image. Try another photo or paste page text."
+	status := fiber.StatusUnprocessableEntity
+	switch {
+	case errors.Is(err, app.ErrPayloadTooLarge):
+		msg = "Image too large (max 10 MB)."
+		status = fiber.StatusRequestEntityTooLarge
+	case errors.Is(err, app.ErrIngestBusy):
+		msg = "Already processing a photo. Wait, then try again."
+		status = fiber.StatusConflict
+	case errors.Is(err, app.ErrEmptyPage):
+		msg = "No text found in the image. Try another photo or paste page text."
+		status = fiber.StatusBadRequest
+	case errors.Is(err, app.ErrOcrFailed):
+		msg = "Could not read text from the image. Try another photo or paste page text."
+		status = fiber.StatusUnprocessableEntity
+	}
+	c.Status(status)
+	return s.render(c, "sentence_candidates", map[string]any{
+		"Error":      msg,
+		"Candidates": nil,
 	})
 }
 

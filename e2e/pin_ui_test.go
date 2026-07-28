@@ -18,6 +18,7 @@ import (
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
+	"github.com/rikiisworking/miner/internal/ocrtest"
 	"github.com/rikiisworking/miner/web"
 )
 
@@ -32,7 +33,7 @@ func startServer(t *testing.T) (baseURL string, shutdown func()) {
 		pinauth.Static{Secret: "test-pin-ok"},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
-		ocr.Stub{},
+		ocr.MustEngine(t),
 	)
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
@@ -639,5 +640,191 @@ func TestUI_PageText_ProposePickAnalyze_EditReanalyze(t *testing.T) {
 	if !foundByouin {
 		html, _ := page.HTML()
 		t.Fatalf("edited analyze missing 病院 content-word\nhtml=%s", html)
+	}
+}
+
+func fixtureImagePath(t *testing.T, caseID string) string {
+	t.Helper()
+	manifest, err := ocrtest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest.Must(caseID).Path()
+}
+
+func TestUI_PhotoIngest_UploadPickAnalyze_MarkExport(t *testing.T) {
+	// Real tesseract on multi-sentence fixture image.
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+	imgPath := fixtureImagePath(t, "02_multi_sentence")
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	if _, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-upload-section"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("photo-upload-section missing: %v\nhtml=%s", err, html)
+	}
+
+	input, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-input"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := input.SetFiles([]string{imgPath}); err != nil {
+		t.Fatalf("set photo file: %v", err)
+	}
+
+	submit, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-submit"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := submit.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := page.Timeout(15 * time.Second).Element(`[data-testid="sentence-candidates"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("candidates after photo: %v\nhtml=%s", err, html)
+	}
+	cands, err := page.Elements(`[data-testid="sentence-candidate"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) < 2 {
+		html, _ := page.HTML()
+		t.Fatalf("candidate count=%d want ≥2\nhtml=%s", len(cands), html)
+	}
+
+	// Upload control re-enabled after response (hx-disabled-elt).
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		btn, err := page.Element(`[data-testid="photo-submit"]`)
+		if err == nil {
+			dis, err := btn.Property("disabled")
+			if err == nil && !dis.Bool() {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+
+	// Pick first candidate → analyze
+	pick, err := page.Timeout(5 * time.Second).Element(`[data-testid="candidate-pick"][data-index="0"]`)
+	if err != nil {
+		picks, err2 := page.Elements(`[data-testid="candidate-pick"]`)
+		if err2 != nil || len(picks) == 0 {
+			html, _ := page.HTML()
+			t.Fatalf("candidate-pick missing: %v\nhtml=%s", err, html)
+		}
+		pick = picks[0]
+	}
+	if err := pick.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("analyze after photo pick: %v\nhtml=%s", err, html)
+	}
+
+	// Mark first available content word (stub: 病院 for first sentence of multi fixture)
+	words, err := page.Elements(`[data-testid="mark-unknown"]`)
+	if err != nil || len(words) == 0 {
+		html, _ := page.HTML()
+		t.Fatalf("no mark-unknown after photo path\nhtml=%s", html)
+	}
+	surfaceAttr, err := words[0].Attribute("data-surface")
+	if err != nil || surfaceAttr == nil || *surfaceAttr == "" {
+		t.Fatal("mark-unknown missing data-surface")
+	}
+	surface := *surfaceAttr
+	if err := words[0].Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="unknown-feedback"][data-status="saved"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("save feedback after photo path: %v\nhtml=%s", err, html)
+	}
+
+	// Queue + export still work
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-entry"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue-entry after photo path: %v\nhtml=%s", err, html)
+	}
+	exportLink, err := page.Timeout(5 * time.Second).Element(`[data-testid="export-markdown"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	href, err := exportLink.Attribute("href")
+	if err != nil || href == nil {
+		t.Fatal("export href missing")
+	}
+	result, err := page.Eval(`async (url) => {
+		const r = await fetch(url, { credentials: 'same-origin' });
+		const text = await r.text();
+		return { status: r.status, text: text };
+	}`, *href)
+	if err != nil {
+		t.Fatalf("export fetch: %v", err)
+	}
+	if int(result.Value.Get("status").Num()) != 200 {
+		t.Fatalf("export status=%v", result.Value.Get("status"))
+	}
+	md := result.Value.Get("text").Str()
+	if !strings.Contains(md, surface) {
+		t.Fatalf("export missing surface %q body=%q", surface, md)
+	}
+}
+
+func TestUI_PhotoIngest_OCRFail_ErrorVisible_QueueUnchanged(t *testing.T) {
+	// Non-image fixture forces real engine failure; queue stays empty.
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+	imgPath := fixtureImagePath(t, "19_not_an_image")
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	input, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-input"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := input.SetFiles([]string{imgPath}); err != nil {
+		t.Fatalf("set photo file: %v", err)
+	}
+	submit, err := page.Timeout(5 * time.Second).Element(`[data-testid="photo-submit"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := submit.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	el, err := page.Timeout(15 * time.Second).Element(`[data-testid="page-text-error"]`)
+	if err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("OCR error missing: %v\nhtml=%s", err, html)
+	}
+	if txt, _ := el.Text(); txt == "" {
+		t.Fatal("expected OCR error text")
+	}
+
+	// Queue empty state unchanged
+	nav, err := page.Timeout(5 * time.Second).Element(`[data-testid="nav-queue"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nav.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="queue-empty"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("queue should stay empty after OCR fail: %v\nhtml=%s", err, html)
 	}
 }

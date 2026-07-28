@@ -1,7 +1,9 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,21 +18,25 @@ import (
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/httpapi"
+	"github.com/rikiisworking/miner/internal/ocrtest"
 	"github.com/rikiisworking/miner/internal/ports"
 	"github.com/rikiisworking/miner/web"
 )
 
 func newTestServer(t *testing.T) *httpapi.Server {
 	t.Helper()
-	return newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem())
+	return newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), ocr.MustEngine(t))
 }
 
-func newTestServerWith(t *testing.T, a ports.JapaneseAnalyzer, q ports.QueueStore) *httpapi.Server {
+func newTestServerWith(t *testing.T, a ports.JapaneseAnalyzer, q ports.QueueStore, o ports.OcrEngine) *httpapi.Server {
 	t.Helper()
 	if q == nil {
 		q = queuestore.NewMem()
 	}
-	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, a, q, ocr.Stub{})
+	if o == nil {
+		o = ocr.MustEngine(t)
+	}
+	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, a, q, o)
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
 		WebFS:     web.FS(),
@@ -556,7 +562,7 @@ func TestAddUnknown_Authenticated_QueueListReflectsEntry(t *testing.T) {
 // Same pass_id with empty entry_id must bind both posts to one queue entry (transport proof of Pass protocol).
 func TestAddUnknown_SamePassID_EmptyEntryID_OneEntry(t *testing.T) {
 	q := queuestore.NewMem()
-	s := newTestServerWith(t, analyzer.Stub{}, q)
+	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
 	cookies := unlockCookies(t, s)
 
 	post := func(surface, passID string) string {
@@ -606,7 +612,7 @@ func TestAddUnknown_SamePassID_EmptyEntryID_OneEntry(t *testing.T) {
 
 func TestAddUnknown_Duplicate_IdempotentOneUnknown(t *testing.T) {
 	q := queuestore.NewMem()
-	s := newTestServerWith(t, analyzer.Stub{}, q)
+	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
 	cookies := unlockCookies(t, s)
 
 	post := func(entryID string) string {
@@ -740,7 +746,7 @@ func TestExport_Authenticated_MarkdownUTF8_QueueUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newTestServerWith(t, analyzer.Stub{}, q)
+	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
 	cookies := unlockCookies(t, s)
 
 	before, err := q.List()
@@ -832,7 +838,7 @@ func TestExport_Unauthenticated_Rejected(t *testing.T) {
 
 func TestClearAll_EmptiesQueue_SecondClearSafe(t *testing.T) {
 	q := queuestore.NewMem()
-	s := newTestServerWith(t, analyzer.Stub{}, q)
+	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
 	cookies := unlockCookies(t, s)
 
 	form := url.Values{"sentence": {"今日は雨だ。"}, "surface": {"雨"}}
@@ -914,7 +920,7 @@ func TestQueuePage_ShowsExportAndClearControls(t *testing.T) {
 // Ensure file-backed store works end-to-end through HTTP (optional smoke).
 func TestAddUnknown_FileStore_Persists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.json")
-	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewFile(path))
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewFile(path), ocr.MustEngine(t))
 	cookies := unlockCookies(t, s)
 
 	form := url.Values{
@@ -939,5 +945,214 @@ func TestAddUnknown_FileStore_Persists(t *testing.T) {
 	}
 	if len(list) != 1 || len(list[0].Unknowns) != 1 || list[0].Unknowns[0] != "雨" {
 		t.Fatalf("persisted=%+v", list)
+	}
+}
+
+// multipartIngest builds a POST /ingest body with one file field "image".
+func multipartIngest(t *testing.T, filename string, image []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("image", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(image); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/ingest", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func TestIngest_Authenticated_TinyFixture_ReturnsCandidates(t *testing.T) {
+	manifest, err := ocrtest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := manifest.Must("02_multi_sentence")
+	img, err := c.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), ocr.MustEngine(t))
+	cookies := unlockCookies(t, s)
+
+	req := multipartIngest(t, "page.png", img)
+	for _, ck := range cookies {
+		req.AddCookie(ck)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(html, `data-testid="sentence-candidates"`) {
+		t.Fatalf("missing candidates: %s", html)
+	}
+	// Real OCR on multi-sentence fixture → ≥2 candidates with known text.
+	if strings.Count(html, `data-testid="sentence-candidate"`) < 2 {
+		t.Fatalf("want ≥2 candidates: %s", html)
+	}
+	compact := strings.ReplaceAll(strings.ReplaceAll(html, " ", ""), "\n", "")
+	if !strings.Contains(compact, "病院に行った") || !strings.Contains(compact, "私は本を読む") {
+		t.Fatalf("missing sentence text: %s", html)
+	}
+}
+
+func TestIngest_Unauthenticated_Rejected(t *testing.T) {
+	req := multipartIngest(t, "page.png", []byte("fake-png"))
+	req.Header.Set("Accept", "application/json")
+	s := newTestServer(t)
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+}
+
+func TestIngest_Oversize_ClearError(t *testing.T) {
+	// Under Fiber BodyLimit (Max+512KiB) so MiningApp rejects, not the framework.
+	img := make([]byte, app.MaxUploadBytes+1)
+	for i := range img {
+		img[i] = byte(i % 251)
+	}
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), ocr.MustEngine(t))
+	cookies := unlockCookies(t, s)
+
+	req := multipartIngest(t, "big.png", img)
+	for _, ck := range cookies {
+		req.AddCookie(ck)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d want 413 body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(html, `data-testid="page-text-error"`) && !strings.Contains(html, `data-testid="candidates-error"`) {
+		t.Fatalf("missing error partial: %s", html)
+	}
+	if !strings.Contains(html, "10") || !strings.Contains(strings.ToLower(html), "large") {
+		t.Fatalf("error should mention size cap: %s", html)
+	}
+}
+
+func TestIngest_OCRFailure_QueueIntact(t *testing.T) {
+	q := queuestore.NewMem()
+	// Seed one durable entry before failing OCR.
+	if err := q.Create(ports.QueueEntry{
+		ID:             "seed-1",
+		Sentence:       "病院に行った。",
+		Unknowns:       []string{"病院"},
+		FirstUnknownAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServerWith(t, analyzer.Stub{}, q, ocr.MustEngine(t))
+	cookies := unlockCookies(t, s)
+
+	manifest, err := ocrtest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad, err := manifest.Must("19_not_an_image").Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := multipartIngest(t, "page.bin", bad)
+	for _, ck := range cookies {
+		req.AddCookie(ck)
+	}
+
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	// Real engine fails on non-image → 422 OCR error (not 200 candidates).
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d want 422 body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(html, `role="alert"`) {
+		t.Fatalf("missing alert: %s", html)
+	}
+	if !strings.Contains(strings.ToLower(html), "image") && !strings.Contains(strings.ToLower(html), "ocr") && !strings.Contains(strings.ToLower(html), "photo") {
+		t.Fatalf("OCR fail message unclear: %s", html)
+	}
+
+	// Queue still has the seed entry.
+	list, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "seed-1" {
+		t.Fatalf("queue corrupted after OCR fail: %+v", list)
+	}
+
+	// GET /queue still lists it.
+	reqQ := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	for _, ck := range cookies {
+		reqQ.AddCookie(ck)
+	}
+	respQ, err := s.App().Test(reqQ, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respQ.Body.Close()
+	qBody, _ := io.ReadAll(respQ.Body)
+	if !strings.Contains(string(qBody), "病院に行った。") {
+		t.Fatalf("queue page lost entry: %s", qBody)
+	}
+}
+
+func TestHome_ShowsPhotoUploadSection(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/home", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if !strings.Contains(html, `data-testid="photo-upload-section"`) {
+		t.Fatalf("missing photo-upload-section: %s", html)
+	}
+	if !strings.Contains(html, `data-testid="photo-input"`) {
+		t.Fatalf("missing photo-input: %s", html)
+	}
+	if !strings.Contains(html, `hx-post="/ingest"`) {
+		t.Fatalf("photo form should post /ingest: %s", html)
+	}
+	if !strings.Contains(html, `hx-encoding="multipart/form-data"`) {
+		t.Fatalf("photo form needs multipart encoding: %s", html)
 	}
 }

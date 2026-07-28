@@ -11,6 +11,7 @@ import (
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
+	"github.com/rikiisworking/miner/internal/ocrtest"
 	"github.com/rikiisworking/miner/internal/ports"
 )
 
@@ -50,12 +51,28 @@ func newAppWithQueue(t *testing.T, analyzer ports.JapaneseAnalyzer, queue ports.
 	if analyzer == nil {
 		analyzer = fakeAnalyzer{}
 	}
-	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue, ocr.Stub{})
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue, ocr.MustEngine(t))
 }
 
 func newAppWithOCR(t *testing.T, o ports.OcrEngine) *app.MiningApp {
 	t.Helper()
+	if o == nil {
+		o = ocr.MustEngine(t)
+	}
 	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, queuestore.NewMem(), o)
+}
+
+func fixtureBytes(t *testing.T, id string) []byte {
+	t.Helper()
+	m, err := ocrtest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := m.Must(id).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestUnlock_AcceptsCorrectPIN(t *testing.T) {
@@ -735,16 +752,18 @@ func TestClearAll_EmptiesStore_AndNoOpWhenEmpty(t *testing.T) {
 }
 
 func TestIngestPage_OCRTextToCandidates(t *testing.T) {
-	m := newAppWithOCR(t, ocr.Stub{Text: "病院に行った。今日は雨だ。"})
-	img := []byte("fake-png-bytes")
+	m := newAppWithOCR(t, nil)
+	img := fixtureBytes(t, "02_multi_sentence")
 	got, err := m.IngestPage(img)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Text != "病院に行った。今日は雨だ。" {
+	// Real OCR: require known sentences (spacing/newlines may vary).
+	compact := strings.ReplaceAll(strings.ReplaceAll(got.Text, " ", ""), "\n", "")
+	if !strings.Contains(compact, "病院に行った") || !strings.Contains(compact, "私は本を読む") {
 		t.Fatalf("Text=%q", got.Text)
 	}
-	if len(got.Candidates) != 2 {
+	if len(got.Candidates) < 2 {
 		t.Fatalf("Candidates=%#v", got.Candidates)
 	}
 	list, err := m.ListQueue()
@@ -757,7 +776,8 @@ func TestIngestPage_OCRTextToCandidates(t *testing.T) {
 }
 
 func TestIngestPage_OversizeRejected(t *testing.T) {
-	m := newAppWithOCR(t, ocr.Stub{Text: "should-not-run"})
+	// OCR must not run — any engine is fine; size gate is MiningApp.
+	m := newAppWithOCR(t, nil)
 	img := make([]byte, app.MaxUploadBytes+1)
 	_, err := m.IngestPage(img)
 	if !errors.Is(err, app.ErrPayloadTooLarge) {
@@ -766,7 +786,7 @@ func TestIngestPage_OversizeRejected(t *testing.T) {
 }
 
 func TestIngestPage_EmptyImage(t *testing.T) {
-	m := newAppWithOCR(t, ocr.Stub{Text: "x"})
+	m := newAppWithOCR(t, nil)
 	_, err := m.IngestPage(nil)
 	if !errors.Is(err, app.ErrEmptyPage) {
 		t.Fatalf("got %v want ErrEmptyPage", err)
@@ -774,8 +794,10 @@ func TestIngestPage_EmptyImage(t *testing.T) {
 }
 
 func TestIngestPage_OCRFailure(t *testing.T) {
-	m := newAppWithOCR(t, ocr.Stub{FailWith: errors.New("engine down")})
-	_, err := m.IngestPage([]byte("img"))
+	m := newAppWithOCR(t, nil)
+	// Non-image payload forces tesseract/leptonica error.
+	img := fixtureBytes(t, "19_not_an_image")
+	_, err := m.IngestPage(img)
 	if !errors.Is(err, app.ErrOcrFailed) {
 		t.Fatalf("got %v want ErrOcrFailed", err)
 	}
@@ -789,8 +811,10 @@ func TestIngestPage_OCRFailure(t *testing.T) {
 }
 
 func TestIngestPage_EmptyOCRText(t *testing.T) {
-	m := newAppWithOCR(t, ocr.Stub{Text: "   "})
-	_, err := m.IngestPage([]byte("img"))
+	m := newAppWithOCR(t, nil)
+	// Blank page → no glyphs → empty OCR text → ErrEmptyPage.
+	img := fixtureBytes(t, "06_blank")
+	_, err := m.IngestPage(img)
 	if !errors.Is(err, app.ErrEmptyPage) {
 		t.Fatalf("got %v want ErrEmptyPage", err)
 	}
@@ -830,8 +854,8 @@ func TestIngestPage_DoesNotClearQueue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, q, ocr.Stub{Text: "今日は雨だ。"})
-	if _, err := m.IngestPage([]byte("img")); err != nil {
+	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, q, ocr.MustEngine(t))
+	if _, err := m.IngestPage(fixtureBytes(t, "01_single_sentence")); err != nil {
 		t.Fatal(err)
 	}
 	list, err := m.ListQueue()
@@ -858,21 +882,20 @@ func (s *slowOCR) Recognize(image []byte) (string, error) {
 }
 
 func TestIngestPage_ExactMaxUploadBytesAllowed(t *testing.T) {
-	m := newAppWithOCR(t, ocr.Stub{Text: "私は本を読む。"})
+	// Size gate only: exact max must not be ErrPayloadTooLarge.
+	// Random bytes are not a valid image; OCR may fail after the size check.
+	m := newAppWithOCR(t, nil)
 	img := make([]byte, app.MaxUploadBytes)
-	got, err := m.IngestPage(img)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Candidates) != 1 {
-		t.Fatalf("candidates=%#v", got.Candidates)
+	_, err := m.IngestPage(img)
+	if errors.Is(err, app.ErrPayloadTooLarge) {
+		t.Fatal("exact MaxUploadBytes must not be rejected as too large")
 	}
 }
 
 func TestNewMiningApp_RequiresPorts(t *testing.T) {
 	q := queuestore.NewMem()
 	a := fakeAnalyzer{}
-	o := ocr.Stub{Text: "x"}
+	o := ocr.MustEngine(t)
 	p := pinauth.Static{Secret: "p"}
 
 	mustPanic := func(name string, fn func()) {

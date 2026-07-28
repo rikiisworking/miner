@@ -33,8 +33,21 @@ func (p *passRegistry) lookupOrCreate(passID string, create func() (entryID stri
 	return id, true, nil
 }
 
-func (p *passRegistry) clear() {
+// clearWith holds the registry lock for the whole fn, then empties the map.
+// Used by ClearAll so queue wipe and pass unbind cannot race first-tap bind.
+func (p *passRegistry) clearWith(fn func() error) error {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := fn(); err != nil {
+		return err
+	}
 	p.byID = map[string]string{}
+	return nil
+}
+
+// drop removes one pass binding (stale entry after ClearAll races append).
+func (p *passRegistry) drop(passID string) {
+	p.mu.Lock()
+	delete(p.byID, passID)
 	p.mu.Unlock()
 }

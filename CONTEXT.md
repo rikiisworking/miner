@@ -15,7 +15,7 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 | **OcrEngine** | Port: `Recognize(ctx, image) → text` (local only). Ticket 06. Prod: `adapters/ocr.Tesseract` (CLI; engine stdout, no product normalize). Test: `adapters/ocr.Static`. Product page-text hygiene: **NormalizePageText** on MiningApp before SplitSentences. |
 | **NormalizePageText** | Pure helper: inter-CJK space strip + blank-line collapse. Used by IngestPage and ProposeSentences. |
 | **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. |
-| **QueueStore** | Port: durable queue entries. File JSON + Mem adapters. Surface: **Create**, **List**, **AppendUnknown** → `AppendResult`, **ClearAll**. Sentinels: `queuestore.ErrEmptyID`, `ErrDuplicateID`. |
+| **QueueStore** | Port: durable queue entries. File JSON + Mem adapters. Surface: **Create**, **List** (unordered), **AppendUnknown** → `AppendResult`, **ClearAll**. Product display/export order lives on **MiningApp.ListQueue** / **ExportMarkdown** (FirstUnknownAt, then id). Sentinels: `queuestore.ErrEmptyID`, `ErrDuplicateID`. |
 | **IngestPage** | MiningApp: image → OCR (ctx, **MaxIngestDuration**) → **NormalizePageText** → candidates. Empty image → **ErrEmptyImage**; empty OCR text → **ErrEmptyPage**. Single-flight **ErrIngestBusy**; cancel **ErrIngestCanceled**. Never writes queue. |
 | **Queue entry** | Stable id + sentence text + ordered unique unknowns + first-unknown-at. New mining pass ⇒ new id (no merge-by-text). |
 | **Analyze pass / PassID** | Ephemeral id returned by each `AnalyzeSentence`. First `AddUnknown` with that pass creates the entry; later unknowns (or concurrent first-taps) with the same pass append. Not durable; not the queue entry id. See **Pass protocol**. |
@@ -45,14 +45,15 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 
 - **Go** + **Fiber** (HTTP adapter)
 - **HTMX** + server HTML (`web/` embedded; optional `MINER_WEB_ROOT` for disk override)
-- Single process home server; session cookie **HttpOnly** + **SameSite=Lax** until process restart
-- Durable queue file (`MINER_DATA_DIR/queue.json`, default `data/`); survives restart. Session does not.
+- Single process home server; session cookie **HttpOnly** + **SameSite=Lax**. In-memory sessions die on process restart; cookie max-age is long (home always-on box) so re-PIN is not forced mid-session while the process lives
+- Durable queue file (`MINER_DATA_DIR/queue.json`, default `data/`, owner-only `0o600`); survives restart. Session does not
+- Unlock rate-limited per client IP (HTTP adapter) to slow LAN PIN guessing
 
 ## Seams
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
 2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer stub, ocr Tesseract, queuestore file + mem for tests).
-3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text / photo-ingest candidates (`POST /ingest`), analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `auth_error` fragment (never a feature partial).
+3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text / photo-ingest candidates (`POST /ingest`), analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `htmx_error` fragment (never a feature partial).
 4. **web.FS()** — templates + static assets (embed by default).
 
 ## Testing layers

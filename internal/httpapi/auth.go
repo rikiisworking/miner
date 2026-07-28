@@ -21,9 +21,18 @@ func (s *Server) handleIndex(c *fiber.Ctx) error {
 }
 
 func (s *Server) handleUnlock(c *fiber.Ctx) error {
+	ip := c.IP()
+	if !s.unlockAllowed(ip) {
+		c.Status(fiber.StatusTooManyRequests)
+		return s.render(c, "pin", map[string]any{
+			"Error": "Too many PIN attempts. Wait a minute and try again.",
+		})
+	}
+
 	pin := c.FormValue("pin")
 	if err := s.mining.Unlock(pin); err != nil {
 		if errors.Is(err, app.ErrInvalidPIN) {
+			s.recordUnlockFail(ip)
 			c.Status(fiber.StatusUnauthorized)
 			return s.render(c, "pin", map[string]any{
 				"Error": "Incorrect PIN. Try again.",
@@ -31,6 +40,7 @@ func (s *Server) handleUnlock(c *fiber.Ctx) error {
 		}
 		return err
 	}
+	s.clearUnlockFails(ip)
 
 	sess, err := s.store.Get(c)
 	if err != nil {
@@ -54,7 +64,7 @@ func (s *Server) requireAuth(c *fiber.Ctx) error {
 		return err
 	}
 	if !ok {
-		// HTMX: generic auth fragment only — never a feature partial (analyze/queue/…).
+		// HTMX: generic error fragment only — never a feature partial (analyze/queue/…).
 		if c.Get("HX-Request") == "true" {
 			c.Status(fiber.StatusUnauthorized)
 			return s.renderHTMXError(c, fiber.StatusUnauthorized, "Session required. Enter PIN.")

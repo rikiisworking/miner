@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/rikiisworking/miner/internal/adapters/analyzer"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
 	"github.com/rikiisworking/miner/internal/ports"
@@ -110,7 +111,7 @@ func TestSelectCandidate_Analyze_DoesNotCreateQueueUntilUnknown(t *testing.T) {
 		{Surface: "。", Reading: "", Content: false},
 	}
 	q := queuestore.NewMem()
-	m := newAppWithQueue(t, fakeAnalyzer{byText: map[string][]ports.Token{sentence: tokens}}, q)
+	m := newAppWithQueue(t, analyzer.Stub{ByText: map[string][]ports.Token{sentence: tokens}}, q)
 
 	page := "病院に行った。" + sentence
 	cands, err := m.ProposeSentences(page)
@@ -141,8 +142,8 @@ func TestSelectCandidate_Analyze_DoesNotCreateQueueUntilUnknown(t *testing.T) {
 }
 
 func TestEditWorkingSentence_ReAnalyze_NewTokens(t *testing.T) {
-	m := newApp(t, fakeAnalyzer{
-		byText: map[string][]ports.Token{
+	m := newApp(t, analyzer.Stub{
+		ByText: map[string][]ports.Token{
 			"病院に行った。": {
 				{Surface: "病院", Reading: "びょういん", Content: true},
 				{Surface: "に", Reading: "", Content: false},
@@ -186,5 +187,20 @@ func TestProposeSentences_EmptyReturnsErrEmptyPage(t *testing.T) {
 	_, err := m.ProposeSentences("   ")
 	if !errors.Is(err, app.ErrEmptyPage) {
 		t.Fatalf("got %v want ErrEmptyPage", err)
+	}
+}
+
+func TestSplitSentences_ConsecutiveTerminators_NoEmptyCandidates(t *testing.T) {
+	for _, in := range []string{"。。！", "A。。B。"} {
+		got := app.SplitSentences(in)
+		for _, s := range got {
+			if s == "" {
+				t.Fatalf("empty candidate for %q: %#v", in, got)
+			}
+		}
+	}
+	got := app.SplitSentences("A。。B。")
+	if len(got) < 2 {
+		t.Fatalf("got %#v", got)
 	}
 }

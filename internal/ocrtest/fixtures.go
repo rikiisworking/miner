@@ -53,8 +53,8 @@ type Manifest struct {
 	Cases          []Case `json:"cases"`
 }
 
-// ByID returns the case or false.
-func (m *Manifest) ByID(id string) (Case, bool) {
+// byID returns the case or false.
+func (m *Manifest) byID(id string) (Case, bool) {
 	for _, c := range m.Cases {
 		if c.ID == id {
 			return c, true
@@ -65,7 +65,7 @@ func (m *Manifest) ByID(id string) (Case, bool) {
 
 // Must returns the case or panics (for table tests with fixed ids).
 func (m *Manifest) Must(id string) Case {
-	c, ok := m.ByID(id)
+	c, ok := m.byID(id)
 	if !ok {
 		panic(fmt.Sprintf("ocrtest: unknown case id %q", id))
 	}

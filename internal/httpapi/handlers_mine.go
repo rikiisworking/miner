@@ -30,13 +30,18 @@ func (s *Server) handlePageText(c *fiber.Ctx) error {
 // Multipart field "image". Image bytes are not saved to disk; discarded after return.
 // Reuses sentence_candidates partial (same pick → analyze pipeline as page-text).
 func (s *Server) handleIngest(c *fiber.Ctx) error {
+	// Reject before buffering a large body when single-flight is held.
+	if s.mining.IngestBusy() {
+		return s.renderIngestError(c, app.ErrIngestBusy)
+	}
+
 	fh, err := c.FormFile("image")
 	if err != nil || fh == nil {
 		return s.renderCandidatesErr(c, fiber.StatusBadRequest, "Choose an image of a novel page.")
 	}
 	// Header size is a cheap pre-check; MiningApp still enforces MaxUploadBytes on bytes.
 	if fh.Size > app.MaxUploadBytes {
-		return s.renderCandidatesErr(c, fiber.StatusRequestEntityTooLarge, "Image too large (max 10 MB).")
+		return s.renderCandidatesErr(c, fiber.StatusRequestEntityTooLarge, msgImageTooLarge)
 	}
 
 	f, err := fh.Open()
@@ -65,14 +70,12 @@ func (s *Server) handleAnalyze(c *fiber.Ctx) error {
 	sentence := c.FormValue("sentence")
 	result, err := s.mining.AnalyzeSentence(sentence)
 	if err != nil {
-		msg := "Analysis failed. Edit the sentence and try again."
 		status := fiber.StatusUnprocessableEntity
+		msg := "Analysis failed. The sentence could not be tokenized. Edit the text and try again."
 		if errors.Is(err, app.ErrEmptySentence) {
 			msg = "Enter a sentence to analyze."
 			status = fiber.StatusBadRequest
-		} else if errors.Is(err, app.ErrAnalyze) {
-			msg = "Analysis failed. The sentence could not be tokenized. Edit the text and try again."
-		} else {
+		} else if !errors.Is(err, app.ErrAnalyze) {
 			return s.renderUnexpected(c, err)
 		}
 		c.Status(status)
@@ -99,18 +102,19 @@ func (s *Server) handleAddUnknown(c *fiber.Ctx) error {
 
 	res, err := s.mining.AddUnknown(sentence, surface, entryID, passID)
 	if err != nil {
-		msg := "Could not save unknown."
-		status := fiber.StatusInternalServerError
-		if errors.Is(err, app.ErrEmptySurface) {
+		var (
+			status = fiber.StatusBadRequest
+			msg    string
+		)
+		switch {
+		case errors.Is(err, app.ErrEmptySurface):
 			msg = "Missing word surface."
-			status = fiber.StatusBadRequest
-		} else if errors.Is(err, app.ErrEmptySentence) {
+		case errors.Is(err, app.ErrEmptySentence):
 			msg = "Missing sentence."
-			status = fiber.StatusBadRequest
-		} else if errors.Is(err, app.ErrEntryNotFound) {
+		case errors.Is(err, app.ErrEntryNotFound):
 			msg = "Queue entry not found. Analyze again."
 			status = fiber.StatusNotFound
-		} else {
+		default:
 			return s.renderUnexpected(c, err)
 		}
 		c.Status(status)

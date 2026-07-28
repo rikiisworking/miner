@@ -1375,3 +1375,294 @@ func TestIndex_WithSession_ShowsShell(t *testing.T) {
 		t.Fatalf("expected shell: %s", body)
 	}
 }
+
+func TestAddUnknown_SamePass_ConcurrentFirstTaps_HTTP(t *testing.T) {
+	s := newTestServer(t)
+	cookies := unlockCookies(t, s)
+
+	// Analyze to get pass_id
+	form := url.Values{"sentence": {"私は本を読む。"}}
+	req := httptest.NewRequest(http.MethodPost, "/analyze", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	html := string(body)
+	passID := extractHiddenValue(html, "pass_id")
+	if passID == "" {
+		t.Fatalf("no pass_id in %s", html)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for _, surface := range []string{"私", "本"} {
+		wg.Add(1)
+		go func(surf string) {
+			defer wg.Done()
+			f := url.Values{
+				"sentence": {"私は本を読む。"},
+				"surface":  {surf},
+				"entry_id": {""},
+				"pass_id":  {passID},
+			}
+			r := httptest.NewRequest(http.MethodPost, "/unknowns", strings.NewReader(f.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			for _, c := range cookies {
+				r.AddCookie(c)
+			}
+			resp, err := s.App().Test(r, -1)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				errCh <- errors.New("status " + resp.Status + " body " + string(b))
+			}
+		}(surface)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reqQ := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	for _, c := range cookies {
+		reqQ.AddCookie(c)
+	}
+	respQ, err := s.App().Test(reqQ, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respQ.Body.Close()
+	qBody, _ := io.ReadAll(respQ.Body)
+	qHTML := string(qBody)
+	if strings.Count(qHTML, `data-testid="queue-entry"`) != 1 {
+		t.Fatalf("want 1 entry: %s", qHTML)
+	}
+	if !strings.Contains(qHTML, `data-surface="私"`) || !strings.Contains(qHTML, `data-surface="本"`) {
+		t.Fatalf("missing surfaces: %s", qHTML)
+	}
+}
+
+func TestIngest_Canceled_RequestTimeout408(t *testing.T) {
+	// Fiber app.Test may not always plumb cancel to UserContext; still cover
+	// renderIngestError cancel mapping via a deadline-aware engine + short timeout
+	// by driving MiningApp through a thin wrapper: use engine that fails with deadline.
+	engine := ocr.Static{Err: context.DeadlineExceeded}
+	s := newTestServerWith(t, analyzer.Stub{}, queuestore.NewMem(), engine)
+	cookies := unlockCookies(t, s)
+
+	req := multipartIngest(t, "page.png", []byte("fake-png"))
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Fatalf("status=%d want 408 body=%s", resp.StatusCode, html)
+	}
+	if !strings.Contains(strings.ToLower(html), "cancel") {
+		t.Fatalf("want cancel message: %s", html)
+	}
+}
+
+func TestRequireAuth_HTML_RendersPinPage(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/home", nil)
+	req.Header.Set("Accept", "text/html")
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+	if !strings.Contains(html, `data-testid="pin-form"`) && !strings.Contains(html, `name="pin"`) {
+		t.Fatalf("want pin page: %s", html)
+	}
+	if strings.Contains(html, `data-testid="app-shell"`) {
+		t.Fatal("must not show shell")
+	}
+	if !strings.Contains(html, "Session required") {
+		t.Fatalf("want session message: %s", html)
+	}
+}
+
+func TestRequireAuth_HTMX_PageText_AndIngest_AuthErrorOnly(t *testing.T) {
+	s := newTestServer(t)
+
+	form := url.Values{"page_text": {"私は本を読む。"}}
+	req := httptest.NewRequest(http.MethodPost, "/page-text", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	html := string(body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("page-text status=%d", resp.StatusCode)
+	}
+	if !strings.Contains(html, `data-testid="auth-error"`) {
+		t.Fatalf("want auth-error: %s", html)
+	}
+	if strings.Contains(html, `data-testid="candidate-btn"`) {
+		t.Fatal("must not render candidates")
+	}
+
+	req2 := multipartIngest(t, "page.png", []byte("x"))
+	req2.Header.Set("HX-Request", "true")
+	resp2, err := s.App().Test(req2, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	html2 := string(body2)
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("ingest status=%d", resp2.StatusCode)
+	}
+	if !strings.Contains(html2, `data-testid="auth-error"`) {
+		t.Fatalf("want auth-error: %s", html2)
+	}
+	if strings.Contains(html2, `data-testid="candidate-btn"`) {
+		t.Fatal("must not render candidates")
+	}
+}
+
+func TestQueuePage_NonEmpty_ClearConfirmAttribute(t *testing.T) {
+	q := queuestore.NewMem()
+	if err := q.Create(ports.QueueEntry{
+		ID: "e1", Sentence: "病院に行った。", Unknowns: []string{"病院"}, FirstUnknownAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServerWith(t, analyzer.Stub{}, q, defaultTestOCR)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+	if !strings.Contains(html, `data-testid="clear-all"`) {
+		t.Fatalf("missing clear button: %s", html)
+	}
+	if !strings.Contains(html, "confirm(") {
+		t.Fatalf("missing confirm: %s", html)
+	}
+	if !strings.Contains(html, "entry") {
+		t.Fatalf("missing entry count wording: %s", html)
+	}
+	if strings.Contains(html, "disabled") && strings.Contains(html, `data-testid="clear-all" disabled`) {
+		t.Fatal("clear should be enabled when N>=1")
+	}
+}
+
+func TestClearAll_StoreError_HTTP(t *testing.T) {
+	s := newTestServerWith(t, analyzer.Stub{}, errQueueHTTP{clearErr: errors.New("clear boom")}, defaultTestOCR)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodPost, "/queue/clear", nil)
+	req.Header.Set("HX-Request", "true")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		// non-HTMX path returns error to Fiber; with HX should get fragment
+		t.Log(err)
+	}
+	if resp != nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+		}
+		if !strings.Contains(string(body), `data-testid="auth-error"`) && !strings.Contains(string(body), "wrong") {
+			// htmx_error still uses auth-error testid
+			if !strings.Contains(string(body), "Something went wrong") {
+				t.Fatalf("body=%s", body)
+			}
+		}
+	}
+}
+
+func TestExport_StoreError_HTTP(t *testing.T) {
+	s := newTestServerWith(t, analyzer.Stub{}, errQueueHTTP{listErr: errors.New("list boom")}, defaultTestOCR)
+	cookies := unlockCookies(t, s)
+	req := httptest.NewRequest(http.MethodGet, "/export", nil)
+	req.Header.Set("HX-Request", "true")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := s.App().Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Something went wrong") && !strings.Contains(string(body), `data-testid="auth-error"`) {
+		t.Fatalf("body=%s", body)
+	}
+}
+
+type errQueueHTTP struct {
+	listErr   error
+	createErr error
+	appendErr error
+	clearErr  error
+}
+
+func (e errQueueHTTP) Create(entry ports.QueueEntry) error {
+	if e.createErr != nil {
+		return e.createErr
+	}
+	return nil
+}
+func (e errQueueHTTP) List() ([]ports.QueueEntry, error) {
+	if e.listErr != nil {
+		return nil, e.listErr
+	}
+	return nil, nil
+}
+func (e errQueueHTTP) AppendUnknown(id, surface string) (ports.AppendResult, error) {
+	if e.appendErr != nil {
+		return ports.AppendResult{}, e.appendErr
+	}
+	return ports.AppendResult{Found: false}, nil
+}
+func (e errQueueHTTP) ClearAll() error {
+	if e.clearErr != nil {
+		return e.clearErr
+	}
+	return nil
+}

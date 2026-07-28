@@ -171,6 +171,23 @@ func TestFile_LoadEmptyFile(t *testing.T) {
 	}
 }
 
+func TestFile_SaveFailure_UnwritableDir(t *testing.T) {
+	// Parent path is a file → MkdirAll/write fails.
+	base := t.TempDir()
+	blocker := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(blocker, "queue.json")
+	f := queuestore.NewFile(path)
+	err := f.Create(ports.QueueEntry{
+		ID: "e1", Sentence: "s", Unknowns: []string{"u"}, FirstUnknownAt: time.Now().UTC(),
+	})
+	if err == nil {
+		t.Fatal("want save error")
+	}
+}
+
 func TestFile_LoadCorruptJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {

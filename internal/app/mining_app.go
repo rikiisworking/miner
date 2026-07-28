@@ -90,6 +90,14 @@ func (m *MiningApp) Unlock(pin string) error {
 	return nil
 }
 
+// IngestBusy reports whether IngestPage currently holds the single-flight slot.
+// HTTP may use this to reject before buffering a large multipart body.
+func (m *MiningApp) IngestBusy() bool {
+	m.ingestMu.Lock()
+	defer m.ingestMu.Unlock()
+	return m.ingesting
+}
+
 func (m *MiningApp) clock() time.Time {
 	return time.Now().UTC()
 }

@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-e2e run build
+.PHONY: test test-unit test-e2e run build lint
 
 # Full automated suite (L1 + L2 + L3). Single entrypoint for ticket gates.
 test:
@@ -9,6 +9,12 @@ test-unit:
 
 test-e2e:
 	go test ./e2e/... -count=1 -timeout 120s
+
+lint:
+	go vet ./...
+	staticcheck ./...
+	ineffassign ./...
+	deadcode -test ./...
 
 build:
 	go build -o bin/miner ./cmd/miner

@@ -32,3 +32,29 @@ func TestNormalizePageText_Empty(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestNormalizePageText_CRLF_AndIdeographicSpace(t *testing.T) {
+	in := "私\u3000は\r\n本\u3000を\r読む。"
+	got := app.NormalizePageText(in)
+	if strings.Contains(got, "\r") {
+		t.Fatalf("CR leftover: %q", got)
+	}
+	if strings.Contains(got, "\u3000") || strings.Contains(got, "私 は") {
+		t.Fatalf("ideographic/space not stripped: %q", got)
+	}
+	if !strings.Contains(got, "私は") || !strings.Contains(got, "本を") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestNormalizePageText_BlankLinesCollapsed(t *testing.T) {
+	in := "病院に行った。\n\n\n\n私は本を読む。"
+	got := app.NormalizePageText(in)
+	if strings.Contains(got, "\n\n") {
+		t.Fatalf("blank lines not collapsed: %q", got)
+	}
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines=%v", lines)
+	}
+}

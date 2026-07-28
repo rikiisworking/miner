@@ -122,7 +122,8 @@ func (f *File) load() (fileDoc, error) {
 }
 
 func (f *File) save(doc fileDoc) error {
-	if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
+	// Owner-only dir + file: queue holds learner sentences/unknowns on a shared PC.
+	if err := os.MkdirAll(filepath.Dir(f.path), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
@@ -130,7 +131,7 @@ func (f *File) save(doc fileDoc) error {
 		return err
 	}
 	tmp := f.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, f.path)

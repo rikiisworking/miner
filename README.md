@@ -20,12 +20,13 @@ License: [MIT](LICENSE)
 7. [Quick start (PC)](#quick-start-pc)
 8. [Stepped setup](#stepped-setup)
 9. [Phone on LAN (step-by-step)](#phone-on-lan-step-by-step)
-10. [Configuration](#configuration)
-11. [OCR (NDLOCR-Lite)](#ocr-ndlocr-lite)
-12. [Daily use walkthrough](#daily-use-walkthrough)
-13. [Testing](#testing)
-14. [Tickets](#tickets)
-15. [Feature notes](#feature-notes)
+10. [Phone via Cloudflare Tunnel (HTTPS / camera)](#phone-via-cloudflare-tunnel-https--camera)
+11. [Configuration](#configuration)
+12. [OCR (NDLOCR-Lite)](#ocr-ndlocr-lite)
+13. [Daily use walkthrough](#daily-use-walkthrough)
+14. [Testing](#testing)
+15. [Tickets](#tickets)
+16. [Feature notes](#feature-notes)
 
 ---
 
@@ -34,8 +35,8 @@ License: [MIT](LICENSE)
 | | |
 |--|--|
 | **Runs on** | Your home PC (single Go process) |
-| **Used from** | Phone browser on the **same Wi‑Fi** (or localhost on the PC) |
-| **Auth** | One shared PIN (session cookie; re-PIN after process restart) |
+| **Used from** | Phone browser on the **same Wi‑Fi**, or via **HTTPS tunnel** (`make run-tunnel`) for in-page camera; also localhost on the PC |
+| **Auth** | One shared PIN from **`.env`** (or env); session cookie; re-PIN after process restart |
 | **Durable data** | Queue file only (`MINER_DATA_DIR/queue.json`) |
 | **Ephemeral** | Session, analyze `pass_id` map, OCR image bytes |
 
@@ -183,15 +184,17 @@ Clear all wipes the queue **and** pass bindings (coordinated so concurrent mark+
 ## Repository layout
 
 ```
-cmd/miner/                    # process entry, LAN hints, resolveWebFS
+cmd/miner/                    # process entry, .env load, LAN hints, resolveWebFS
 internal/app/                 # MiningApp facade (primary test seam)
 internal/ports/               # PinAuth, JapaneseAnalyzer, QueueStore, OcrEngine
 internal/adapters/pinauth/    # static shared PIN
 internal/adapters/analyzer/   # Kagome (prod) + Stub (tests) JapaneseAnalyzer
 internal/adapters/ocr/        # NDL / NDLOCR-Lite (prod) + Static (tests)
 scripts/ndl_ocr_worker.py     # long-lived Python worker for NDLOCR-Lite
-scripts/install_ndlocr.sh     # make ocr-install (clone + venv + deps)
+scripts/install_ndlocr.sh     # make ocr-install (clone + venv + deps; Python 3.10–3.12)
+scripts/run_tunnel.sh         # make run-tunnel (miner + free Cloudflare quick tunnel)
 requirements-ocr.txt          # Python deps for the OCR worker venv
+.env.example                  # template for gitignored .env (MINER_PIN, optional keys)
 .deps/                        # local NDLOCR-Lite install (gitignored; make ocr-install)
 internal/adapters/queuestore/ # file + mem QueueStore
 internal/httpapi/             # Fiber + session + handlers
@@ -210,6 +213,8 @@ data/                         # runtime queue (created on run; gitignored)
 | `internal/httpapi` | Routes, cookies, HTML status mapping |
 | `web/templates` | Phone UI chrome and partials |
 | `internal/adapters/*` | How PIN / OCR / queue / analyzer are implemented |
+| `cmd/miner/envfile.go` | `.env` loading rules |
+| `scripts/run_tunnel.sh` | Cloudflare quick-tunnel launcher |
 | `e2e/` | Full click paths (PIN → export → clear) |
 
 ---
@@ -241,8 +246,9 @@ All mining routes require session except `/` and `POST /unlock`.
 ```bash
 git clone <repo-url> && cd miner
 make ocr-install                 # NDLOCR-Lite → .deps/ (once; Linux or macOS)
-export MINER_PIN='choose-a-shared-pin'
-make run                         # picks up .deps OCR env automatically
+cp .env.example .env             # gitignored
+# edit .env → set MINER_PIN=your-shared-pin
+make run                         # loads .env; picks up .deps OCR automatically
 # open http://127.0.0.1:8080
 ```
 
@@ -273,14 +279,15 @@ Without NDLOCR-Lite the server **will not start** (production requires a real lo
 make ocr-install
 # → clones into .deps/ndlocr-lite, creates Python 3.12 (or 3.11/3.10) venv, installs requirements-ocr.txt
 # re-run anytime; skips work if already healthy (OCR_UPDATE=1 to force refresh)
+# refuses / recreates venvs on unsupported Python (3.13+ lack matching OCR wheels)
 ```
 
-Needs: `git`, and either [uv](https://github.com/astral-sh/uv) (recommended) or `python3.12` / `3.11` / `3.10`.
+Needs: `git`, and either [uv](https://github.com/astral-sh/uv) (recommended) or **Python 3.12 / 3.11 / 3.10** only.
 
 | OS | Notes |
 |----|--------|
 | **Linux** | Default path; `MINER_NDL_DEVICE=cpu` (or `cuda` if onnxruntime-gpu + CUDA) |
-| **macOS** | Intel + Apple Silicon; always **CPU** (`MINER_NDL_DEVICE=cpu`). Prefer `brew install python@3.12` or uv. Do not use system Python 3.14 for OCR wheels. |
+| **macOS** | Intel + Apple Silicon; always **CPU** (`MINER_NDL_DEVICE=cpu`). Prefer `brew install python@3.12` or uv. System Python **3.13/3.14** is rejected (no matching onnxruntime wheels). |
 
 `make run` then uses `.deps` automatically when `MINER_NDL_*` are unset. Print exports with `make ocr-env`.
 
@@ -293,7 +300,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
 # brew install python@3.12   # if not using uv to fetch Python
 
 make ocr-install
-export MINER_PIN='your-shared-pin'
+cp .env.example .env   # set MINER_PIN inside
 make run
 ```
 
@@ -312,16 +319,28 @@ export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
 
 ### 4. Choose a PIN (required)
 
+Preferred: put the shared PIN in a gitignored `.env` (shell `export` still works and overrides `.env`):
+
 ```bash
-export MINER_PIN='your-shared-pin'   # not committed; known to household only
+cp .env.example .env
+# edit .env:
+#   MINER_PIN=your-shared-pin
 ```
+
+Or for a one-off shell session:
+
+```bash
+export MINER_PIN='your-shared-pin'
+```
+
+Never commit `.env` (already in `.gitignore`).
 
 ### 5. Build and run
 
 ```bash
 make run
 # equivalent:
-# make build && ./bin/miner
+# make build && ./bin/miner   # loads .env from cwd
 # go run ./cmd/miner
 ```
 
@@ -394,7 +413,7 @@ export MINER_ADDR=192.168.1.10:8080
 ### Step 3 — Start miner and read LAN hints
 
 ```bash
-export MINER_PIN='your-shared-pin'
+# MINER_PIN from .env (or export MINER_PIN=...)
 make run
 ```
 
@@ -439,7 +458,7 @@ macOS: System Settings → Network → Firewall → allow incoming for the binar
 3. **Capture page** → same OCR path as file upload.  
 4. If denied / no camera → use **Page photo** upload or paste text.
 
-HTTPS is not required for many phones on LAN, but some browsers are stricter about camera on plain HTTP; if camera fails, upload or paste still work.
+HTTPS is not required for many phones on LAN, but **iOS Safari does not expose `getUserMedia` on plain `http://LAN-IP`**. If **Open camera** says “Camera not available…”, use [Cloudflare Tunnel](#phone-via-cloudflare-tunnel-https--camera) or **Page photo** upload / paste.
 
 ### Step 7 — Smoke the full path on phone
 
@@ -455,21 +474,102 @@ HTTPS is not required for many phones on LAN, but some browsers are stricter abo
 |---------|--------|
 | Connection refused / timeout | PC running? Same Wi‑Fi? Firewall? Correct IP? |
 | Opens then “Session required” | Cookie blocked? Retry unlock; avoid private-mode quirks |
-| PIN always wrong | Same `MINER_PIN` as process env; rate limit after many fails (wait ~1 min) |
+| PIN always wrong | Same `MINER_PIN` as in `.env` / process env; rate limit after many fails (wait ~1 min) |
 | No LAN IP in logs | PC offline / only loopback; connect Wi‑Fi or set `MINER_ADDR` |
-| Camera blocked | Use upload; or try another browser; check site permissions |
+| Camera blocked | Plain HTTP is not a secure context on iPhone Safari — use `make run-tunnel` or **Page photo** upload |
+| `make run` says MINER_PIN required | `cp .env.example .env` and set `MINER_PIN=…`, or `export MINER_PIN=…` |
+| Tunnel URL won’t open camera | Confirm you opened the **https://\*.trycloudflare.com** URL (not LAN `http://`) |
 | OCR empty / garbage | Better photo, fill frame, less tilt; edit sentence; paste text fallback |
 | Server dies at start with “OCR engine” | `MINER_NDL_ROOT` / python / worker wrong — see [OCR](#ocr-ndlocr-lite) |
 | First photo very slow | Normal: models warm on process start; later pages should be faster |
 
 ---
 
+## Phone via Cloudflare Tunnel (HTTPS / camera)
+
+Goal: give the phone a **real HTTPS origin** so Safari allows the in-page camera, without installing local TLS certs.
+
+Uses [Cloudflare quick tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (`*.trycloudflare.com`) — **free, no Cloudflare account**. URL is temporary and changes each run.
+
+```mermaid
+flowchart LR
+  Phone[Phone Safari] -->|https trycloudflare.com| CF[Cloudflare edge]
+  CF -->|cloudflared| PC[PC miner :8080]
+```
+
+### Prerequisites
+
+1. Same as `make run`: `MINER_PIN` in `.env` (or env), OCR install (`make ocr-install`).
+2. [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) on PATH:
+
+```bash
+# macOS
+brew install cloudflared
+```
+
+### Start
+
+```bash
+# ensure .env has MINER_PIN=… (or export MINER_PIN=...)
+make run-tunnel
+```
+
+Implementation: `make run-tunnel` → `scripts/run_tunnel.sh` starts miner, waits until HTTP is ready, then runs `cloudflared tunnel --url http://127.0.0.1:<port>`.
+
+1. Wait for cloudflared to print a box with `https://….trycloudflare.com`.  
+2. Open that URL on the phone (any network — not limited to home Wi‑Fi).  
+3. Enter PIN → **Open camera** → allow when Safari prompts.  
+4. `Ctrl+C` stops miner and the tunnel.
+
+Default bind is `127.0.0.1:8080` (loopback only; tunnel is the phone path). To also keep LAN HTTP while tunneling, set in `.env` or the shell:
+
+```bash
+# .env: MINER_ADDR=:8080
+# or:
+export MINER_ADDR=:8080
+make run-tunnel
+```
+
+### Security notes
+
+| | |
+|--|--|
+| **Public URL** | Anyone who has the trycloudflare link can hit the PIN page until you stop |
+| **Auth** | Same shared PIN + unlock rate limit as LAN mode |
+| **When done** | Stop the process; do not leave a quick tunnel running unattended |
+| **OCR data** | Still processed only on your PC; Cloudflare only proxies HTTPS |
+
+Named / zero-trust tunnels (account + fixed hostname) are out of scope here; this target is the zero-config free path for camera.
+
+---
+
 ## Configuration
+
+### `.env` file (preferred for PIN)
+
+On startup, `cmd/miner` loads **`.env` from the process working directory** (usually the repo root when you `make run`).
+
+| Rule | Behavior |
+|------|----------|
+| Missing `.env` | OK — use real environment only |
+| Key already set in the shell | **Shell wins** (`.env` does not override) |
+| Template | Copy [`.env.example`](.env.example) → `.env` (gitignored) |
+| Never commit | `.env` is in `.gitignore`; only `.env.example` is tracked |
+
+```bash
+cp .env.example .env
+# edit MINER_PIN=… (and any optional keys)
+make run
+# or HTTPS for phone camera:
+make run-tunnel
+```
+
+### Environment variables
 
 | Env | Required | Default | Meaning |
 |-----|----------|---------|---------|
-| `MINER_PIN` | **yes** | — | Shared unlock PIN (never commit) |
-| `MINER_ADDR` | no | `:8080` | Listen address (`:8080` = all interfaces) |
+| `MINER_PIN` | **yes** | — | Shared unlock PIN (set in `.env` or environment; never commit) |
+| `MINER_ADDR` | no | `:8080` | Listen address (`:8080` = all interfaces). `make run-tunnel` defaults to `127.0.0.1:8080` unless set |
 | `MINER_WEB_ROOT` | no | *(embedded)* | Disk override of `templates/` + `static/` |
 | `MINER_DATA_DIR` | no | `data` | Durable queue directory (`queue.json`) |
 | `MINER_NDL_ROOT` | for OCR | `.deps/ndlocr-lite` via `make` | Absolute path to [ndlocr-lite](https://github.com/ndl-lab/ndlocr-lite) clone |
@@ -482,10 +582,12 @@ Example full launch:
 
 ```bash
 make ocr-install   # once
-export MINER_PIN='household-pin'
-export MINER_ADDR=:8080
-export MINER_DATA_DIR="$HOME/.local/share/miner"
-make run           # MINER_NDL_* default to .deps/
+cp .env.example .env
+# edit .env:
+#   MINER_PIN=household-pin
+#   MINER_ADDR=:8080
+#   MINER_DATA_DIR=/home/you/.local/share/miner
+make run           # loads .env; MINER_NDL_* default to .deps/
 ```
 
 ---
@@ -533,8 +635,8 @@ On startup the worker emits `{"ready":true}` after models load; miner waits (def
 
 ```bash
 make ocr-install          # → .deps/ndlocr-lite + venv + deps (idempotent)
-export MINER_PIN='your-shared-pin'
-make run                  # uses .deps when MINER_NDL_* unset
+cp .env.example .env      # set MINER_PIN (once)
+make run                  # loads .env; uses .deps when MINER_NDL_* unset
 ```
 
 Needs **git** and either [uv](https://github.com/astral-sh/uv) (recommended) or Python **3.12 / 3.11 / 3.10**. System Python 3.14 often lacks `onnxruntime` wheels.
@@ -640,7 +742,7 @@ Export shape (nested list, order by first-unknown-at):
 ## Testing
 
 ```bash
-make test          # L1 + L2 + L3 (no NDLOCR-Lite required)
+make test          # L1 + L2 + L3 + cmd/miner (no NDLOCR-Lite required)
 make test-unit     # internal packages only
 make test-e2e      # headless browser only
 make ocr-contract  # real NDLOCR-Lite fixtures (needs MINER_NDL_*)
@@ -652,10 +754,13 @@ make lint          # vet + staticcheck + ineffassign + deadcode
 | **L1** | `internal/app` | Product rules via MiningApp (fakes + mem/file store + `ocr.Static`) |
 | **L2** | `internal/httpapi` | Fiber `app.Test`: session, HTMX, multipart, pass transport |
 | **L3** | `e2e` | rod + Chromium: PIN → ingest paths → mark → export → clear |
+| **Process** | `cmd/miner` | `.env` loader, LAN hints, `.env.example` / Makefile / tunnel script contracts |
 | **OCR-real** | selected | `MustEngine` / smoke + contract; skips without NDLOCR-Lite env |
 
 L3 downloads Chromium once into `~/.cache/rod`.  
 HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not hang offline.
+
+Process/contract tests cover: `loadDotEnv` (no override of existing env), parse of `.env.example`, `make run-tunnel` wiring, `bash -n` on `scripts/run_tunnel.sh` and `install_ndlocr.sh`, and OCR install Python **3.10–3.12** support helper.
 
 ---
 
@@ -687,7 +792,9 @@ HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not han
 
 - Client script: `web/static/camera.js` → same `POST /ingest` as upload.  
 - No new routes or MiningApp rules.  
-- Permission denied / no camera → in-page message; upload remains.
+- Permission denied / no camera → in-page message; upload remains.  
+- **Secure context required** for live camera (`navigator.mediaDevices`). Plain `http://LAN-IP` fails on iOS Safari with “Camera not available…”.  
+- Fix: `make run-tunnel` (HTTPS via free Cloudflare quick tunnel) or use **Page photo** upload (system camera still works).
 
 ### Photo OCR (NDLOCR-Lite)
 
@@ -716,7 +823,8 @@ HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not han
 |--------|--------|
 | `make ocr-install` | Install NDLOCR-Lite into `.deps/` (clone + venv + deps) |
 | `make ocr-env` | Print `MINER_NDL_*` export lines |
-| `make run` | Build + run (needs `MINER_PIN`; OCR from env or `.deps`) |
+| `make run` | Build + run (`MINER_PIN` in `.env` or env; OCR from env or `.deps`) |
+| `make run-tunnel` | Same as `run`, plus free Cloudflare quick tunnel (HTTPS for phone camera; needs `cloudflared`) |
 | `make build` | `bin/miner` (no OCR install required) |
 | `make test` | Full suite (120s timeout; `ocr.Static` only) |
 | `make test-unit` | `./internal/...` |

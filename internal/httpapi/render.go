@@ -30,11 +30,12 @@ func (s *Server) renderCandidatesErr(c *fiber.Ctx, status int, msg string) error
 }
 
 func (s *Server) renderIngestError(c *fiber.Ctx, err error) error {
-	msg := "Could not read text from the image. Try another photo or paste page text."
+	// Phone-readable: short, actionable, mention paste fallback for novel mining.
+	msg := "Could not read text from the image. Retake (fill the frame, reduce tilt) or paste page text."
 	status := fiber.StatusUnprocessableEntity
 	switch {
 	case errors.Is(err, app.ErrPayloadTooLarge):
-		msg = "Image too large (max 10 MB)."
+		msg = "Image too large (max 10 MB). Use a smaller photo."
 		status = fiber.StatusRequestEntityTooLarge
 	case errors.Is(err, app.ErrIngestBusy):
 		msg = "Already processing a photo. Wait, then try again."
@@ -46,10 +47,10 @@ func (s *Server) renderIngestError(c *fiber.Ctx, err error) error {
 		msg = "Choose an image of a novel page."
 		status = fiber.StatusBadRequest
 	case errors.Is(err, app.ErrEmptyPage):
-		msg = "No text found in the image. Try another photo or paste page text."
+		msg = "No text found in the image. Retake a clearer page photo or paste page text."
 		status = fiber.StatusBadRequest
 	case errors.Is(err, app.ErrOcrFailed):
-		msg = "Could not read text from the image. Try another photo or paste page text."
+		msg = "Could not read text from the image. Retake (fill the frame, reduce tilt) or paste page text."
 		status = fiber.StatusUnprocessableEntity
 	}
 	return s.renderCandidatesErr(c, status, msg)

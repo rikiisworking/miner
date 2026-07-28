@@ -40,14 +40,21 @@
       padding: 0.85rem 0.75rem; font-weight: 500; text-align: left;
     }
     .error {
-      background: #c01c2840; padding: 0.75rem; border-radius: 0.5rem; margin: 0.75rem 0;
+      background: #c01c2840; padding: 0.85rem 0.9rem; border-radius: 0.5rem;
+      margin: 0.75rem 0; font-size: 1.05rem; font-weight: 600;
+      border-left: 4px solid #c01c28;
     }
     .feedback {
-      padding: 0.75rem; border-radius: 0.5rem; margin: 0.5rem 0;
-      font-weight: 600;
+      padding: 0.9rem 1rem; border-radius: 0.5rem; margin: 0.5rem 0;
+      font-size: 1.1rem; font-weight: 700; line-height: 1.35;
+      border-left: 4px solid transparent;
     }
-    .feedback-ok { background: #26a26940; }
-    .feedback-dup { background: #e5a50a40; }
+    .feedback-ok {
+      background: #26a26955; border-left-color: #26a269;
+    }
+    .feedback-dup {
+      background: #e5a50a55; border-left-color: #e5a50a;
+    }
     .furigana {
       font-size: 1.25rem; line-height: 2.1; margin: 0.75rem 0;
       word-break: break-word;
@@ -106,7 +113,7 @@
 
   <section data-testid="camera-section" aria-labelledby="camera-heading">
     <h2 id="camera-heading">Camera</h2>
-    <p class="muted">Shoot a novel page with the phone camera. Same OCR as file upload; image discarded after.</p>
+    <p class="muted">Shoot a novel page. Same OCR as upload; image discarded after. Vertical text may need a quick edit.</p>
     <p class="muted camera-msg" data-testid="camera-fallback" hidden>
       Camera not available in this browser. Use <strong>Page photo</strong> upload below.
     </p>
@@ -127,7 +134,7 @@
 
   <section data-testid="photo-upload-section" aria-labelledby="photo-upload-heading">
     <h2 id="photo-upload-heading">Page photo</h2>
-    <p class="muted">Upload a novel page image (max 10&nbsp;MB). OCR runs on this PC; the image is discarded after.</p>
+    <p class="muted">Upload a novel page (max 10&nbsp;MB). OCR runs on this PC; image discarded after. If vertical OCR looks wrong, pick a sentence and edit it below.</p>
     <form method="post" action="/ingest"
           enctype="multipart/form-data"
           hx-post="/ingest"

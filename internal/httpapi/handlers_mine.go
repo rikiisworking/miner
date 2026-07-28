@@ -65,13 +65,13 @@ func (s *Server) handleAnalyze(c *fiber.Ctx) error {
 	sentence := c.FormValue("sentence")
 	result, err := s.mining.AnalyzeSentence(sentence)
 	if err != nil {
-		msg := "Analysis failed. Try again."
+		msg := "Analysis failed. Edit the sentence and try again."
 		status := fiber.StatusUnprocessableEntity
 		if errors.Is(err, app.ErrEmptySentence) {
 			msg = "Enter a sentence to analyze."
 			status = fiber.StatusBadRequest
 		} else if errors.Is(err, app.ErrAnalyze) {
-			msg = "Analysis failed. The sentence could not be tokenized."
+			msg = "Analysis failed. The sentence could not be tokenized. Edit the text and try again."
 		} else {
 			return s.renderUnexpected(c, err)
 		}

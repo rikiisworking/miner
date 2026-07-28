@@ -4,7 +4,7 @@
 {{else}}
 <div data-testid="sentence-candidates" id="sentence-candidates-inner">
   {{if .Candidates}}
-  <p class="muted" data-testid="candidates-hint">Tap a sentence to analyze. Edit in the box below if needed.</p>
+  <p class="muted" data-testid="candidates-hint">Tap a sentence to analyze. Vertical novel OCR is best-effort — edit the working sentence if a line looks wrong.</p>
   <ul class="candidate-list" data-testid="candidate-list">
     {{- range $i, $s := .Candidates}}
     <li data-testid="sentence-candidate" data-index="{{$i}}">
@@ -19,7 +19,7 @@
     {{- end}}
   </ul>
   {{else}}
-  <p class="muted" data-testid="candidates-empty">No sentences found. Paste page text and try again.</p>
+  <p class="muted" data-testid="candidates-empty">No sentences found. Paste page text, or retake a clearer photo and try again.</p>
   {{end}}
 </div>
 {{end}}

@@ -6,7 +6,7 @@
 
 **Does not block:** 08 — Novel UX hardening (08 may ship on file-upload path alone)
 
-**Status:** in progress
+**Status:** done
 
 **Parent:** `.scratch/novel-miner/spec.md`
 

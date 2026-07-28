@@ -3,11 +3,11 @@
 <div class="error" data-testid="unknown-error" role="alert">{{.Error}}</div>
 {{else}}
   {{if .Duplicate}}
-  <div class="feedback feedback-dup" data-testid="unknown-feedback" data-status="duplicate" role="status">
-    Already saved: {{.Surface}}
+  <div class="feedback feedback-dup" data-testid="unknown-feedback" data-status="duplicate" role="status" aria-live="polite">
+    Already saved: {{.Surface}} (no duplicate added)
   </div>
   {{else}}
-  <div class="feedback feedback-ok" data-testid="unknown-feedback" data-status="saved" role="status">
+  <div class="feedback feedback-ok" data-testid="unknown-feedback" data-status="saved" role="status" aria-live="polite">
     Saved unknown: {{.Surface}}
   </div>
   {{end}}

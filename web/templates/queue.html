@@ -10,6 +10,10 @@
     h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
     h2 { font-size: 1.05rem; margin: 0 0 0.35rem; }
     .muted { opacity: 0.75; font-size: 0.95rem; }
+    .empty-state {
+      margin: 1.25rem 0; padding: 1rem; border-radius: 0.5rem;
+      border: 1px dashed #8886; font-size: 1.05rem; line-height: 1.45;
+    }
     nav { margin-bottom: 1rem; display: flex; gap: 1rem; }
     nav a { color: inherit; font-weight: 600; }
     .actions {
@@ -59,7 +63,9 @@
     </form>
   </div>
   {{if not .Entries}}
-  <p class="muted" data-testid="queue-empty">No unknowns saved yet. Analyze a sentence and tap a content word.</p>
+  <p class="empty-state muted" data-testid="queue-empty">
+    Queue is empty. On <strong>Mine</strong>, analyze a sentence and tap a content word to save an unknown.
+  </p>
   {{else}}
   <p class="muted" data-testid="queue-count">{{len .Entries}} entr{{if eq (len .Entries) 1}}y{{else}}ies{{end}}</p>
   <div data-testid="queue-list">

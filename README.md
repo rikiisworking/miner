@@ -22,8 +22,8 @@ Domain + seam vocabulary: [`CONTEXT.md`](CONTEXT.md).
 | 04 | Export Markdown (+ Clear all) | done (text-only path complete) |
 | 05 | Full-page text → pick sentence | done |
 | 06 | Photo ingest + local OCR (file upload) | done (Tesseract local adapter) |
-| 07 | Phone camera capture UX | in progress |
-| 08 | Novel UX hardening | next |
+| 07 | Phone camera capture UX | done |
+| 08 | Novel UX hardening | done (manual phone novel E2E still recommended) |
 
 ### Configure
 

@@ -30,11 +30,26 @@ is_darwin() {
   [[ "$OS_NAME" == "Darwin" ]]
 }
 
+# Major.minor from a python binary (empty on failure).
+python_mm() {
+  local bin="$1"
+  "$bin" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true
+}
+
+# Supported for requirements-ocr.txt wheels (esp. onnxruntime on macOS).
+python_supported() {
+  case "$(python_mm "$1")" in
+    3.10|3.11|3.12) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 health_ok() {
   local py="$NDL_ROOT/.venv/bin/python"
   [[ -f "$NDL_ROOT/src/ocr.py" ]] || return 1
   # -x can be flaky on some network FS; require file + runnable import instead.
   [[ -f "$py" ]] || return 1
+  python_supported "$py" || return 1
   "$py" -c "import onnxruntime, cv2, PIL, yaml, numpy" >/dev/null 2>&1
 }
 
@@ -69,6 +84,45 @@ python_candidates() {
   esac
 }
 
+# Resolve a pythonX.Y binary: PATH, then Homebrew opt prefixes (even if not linked).
+find_python() {
+  local ver="$1"
+  local cand
+  if command -v "python${ver}" >/dev/null 2>&1; then
+    command -v "python${ver}"
+    return 0
+  fi
+  for cand in \
+    "/opt/homebrew/opt/python@${ver}/bin/python${ver}" \
+    "/usr/local/opt/python@${ver}/bin/python${ver}" \
+    "/opt/homebrew/bin/python${ver}" \
+    "/usr/local/bin/python${ver}"; do
+    if [[ -x "$cand" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+unsupported_python_hint() {
+  if is_darwin; then
+    cat <<'EOF' >&2
+ocr-install: ERROR: need Python 3.12, 3.11, or 3.10 (3.13/3.14 lack matching OCR wheels).
+Install one of:
+  brew install python@3.12
+  # or: https://github.com/astral-sh/uv
+Then retry:
+  make ocr-install
+EOF
+  else
+    cat <<'EOF' >&2
+ocr-install: ERROR: need Python 3.12, 3.11, or 3.10 (or install uv).
+  https://github.com/astral-sh/uv
+EOF
+  fi
+}
+
 create_venv_uv() {
   local ver
   local last_err=""
@@ -83,45 +137,46 @@ create_venv_uv() {
     rm -rf "$NDL_ROOT/.venv"
   done
   printf '%s\n' "$last_err" >&2
-  if is_darwin; then
-    die "uv failed to create a Python 3.12/3.11/3.10 venv on macOS.
-Install uv (https://github.com/astral-sh/uv) and retry, or:
-  brew install python@3.12
-  MINER_NDL_PYTHON_VERSION=3.12 make ocr-install"
-  fi
-  die "uv failed to create a Python 3.12/3.11/3.10 venv"
+  unsupported_python_hint
+  exit 1
 }
 
 create_venv_stdlib() {
   local ver py=""
   for ver in $(python_candidates); do
-    if command -v "python${ver}" >/dev/null 2>&1; then
-      py="python${ver}"
+    if py="$(find_python "$ver")"; then
       break
     fi
+    py=""
   done
   if [[ -z "$py" ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-      py="python3"
-      local pv
-      pv="$("$py" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo unknown)"
-      log "warning: no python3.12/3.11/3.10 on PATH; using $py ($pv)"
-      if is_darwin; then
-        log "on macOS prefer: brew install python@3.12  (or install uv)"
-      fi
+    # Only accept plain python3 when it is already a supported minor.
+    if command -v python3 >/dev/null 2>&1 && python_supported python3; then
+      py="$(command -v python3)"
     else
-      die "need uv or python3 to create venv (https://github.com/astral-sh/uv)"
+      local pv="missing"
+      if command -v python3 >/dev/null 2>&1; then
+        pv="$(python_mm python3)"
+        pv="${pv:-unknown}"
+      fi
+      log "no python3.12/3.11/3.10 found (python3 on PATH: $pv)"
+      unsupported_python_hint
+      exit 1
     fi
   fi
-  log "creating venv with $py ($OS_NAME/$ARCH_NAME)"
+  log "creating venv with $py ($(python_mm "$py"); $OS_NAME/$ARCH_NAME)"
   "$py" -m venv "$NDL_ROOT/.venv"
 }
 
 create_venv() {
   local py_venv="$NDL_ROOT/.venv/bin/python"
   if [[ -f "$py_venv" ]]; then
-    log "venv already exists: $NDL_ROOT/.venv"
-    return
+    if python_supported "$py_venv"; then
+      log "venv already exists: $NDL_ROOT/.venv (Python $(python_mm "$py_venv"))"
+      return
+    fi
+    log "removing unsupported venv Python $(python_mm "$py_venv") at $NDL_ROOT/.venv (need 3.10–3.12)"
+    rm -rf "$NDL_ROOT/.venv"
   fi
 
   if command -v uv >/dev/null 2>&1; then
@@ -179,7 +234,7 @@ Shell exports (if not using make run):
 
 Then:
 
-  export MINER_PIN='your-shared-pin'
+  cp .env.example .env   # set MINER_PIN
   make run
 EOF
   if is_darwin; then
@@ -217,4 +272,7 @@ On macOS, recreate with Python 3.12:
   print_exports
 }
 
-main "$@"
+# Allow unit tests to `source` helpers without running install.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

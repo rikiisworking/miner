@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-e2e run build lint ocr-install ocr-env ocr-contract
+.PHONY: test test-unit test-e2e run run-tunnel build lint ocr-install ocr-env ocr-contract
 
 # GNU make (Linux + macOS Xcode/Homebrew). Repo-local NDLOCR-Lite install.
 # Override with MINER_NDL_* env. Paths work on macOS (spaces in CURDIR quoted in recipes).
@@ -53,14 +53,37 @@ lint:
 build:
 	go build -o bin/miner ./cmd/miner
 
-# Dev: export MINER_PIN first. OCR: make ocr-install (or set MINER_NDL_*).
-# Listens on :8080 (all interfaces) by default. Phone on same LAN: http://<pc-ip>:8080
-run: build
-	@test -n "$$MINER_PIN" || (echo "MINER_PIN is required (export MINER_PIN=...)"; exit 1)
+# Shared preflight for run / run-tunnel (PIN via env or .env + OCR install).
+define RUN_PREFLIGHT
+	@if [ -z "$$MINER_PIN" ]; then \
+		if [ ! -f .env ] || ! grep -qE '^[[:space:]]*(export[[:space:]]+)?MINER_PIN=.+' .env; then \
+			echo "MINER_PIN is required (add to .env or export MINER_PIN=...)"; \
+			echo "  cp .env.example .env   # then edit MINER_PIN"; \
+			exit 1; \
+		fi; \
+	fi
 	@root="$${MINER_NDL_ROOT:-$(NDL_ROOT)}"; \
 	py="$${MINER_NDL_PYTHON:-$(NDL_PYTHON)}"; \
 	worker="$${MINER_NDL_WORKER:-$(NDL_WORKER)}"; \
 	test -f "$$root/src/ocr.py" || (echo "OCR not installed. Run: make ocr-install"; exit 1); \
 	test -f "$$py" || (echo "OCR venv missing. Run: make ocr-install"; exit 1); \
-	test -f "$$worker" || (echo "OCR worker missing: $$worker"; exit 1); \
+	test -f "$$worker" || (echo "OCR worker missing: $$worker"; exit 1)
+endef
+
+# Dev: set MINER_PIN in .env (or export). OCR: make ocr-install (or set MINER_NDL_*).
+# Listens on :8080 (all interfaces) by default. Phone on same LAN: http://<pc-ip>:8080
+run: build
+	$(RUN_PREFLIGHT)
 	$(OCR_ENV) ./bin/miner
+
+# HTTPS via free Cloudflare quick tunnel (trycloudflare.com). Needs cloudflared.
+# Use for iPhone Safari camera (secure context). Public URL until Ctrl+C — PIN only.
+# Default bind: 127.0.0.1:8080 (override with MINER_ADDR if you also want LAN HTTP).
+run-tunnel: build
+	$(RUN_PREFLIGHT)
+	@command -v cloudflared >/dev/null 2>&1 || ( \
+		echo "cloudflared not found. Install: brew install cloudflared"; \
+		echo "  or https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"; \
+		exit 1)
+	@chmod +x scripts/run_tunnel.sh
+	$(OCR_ENV) ./scripts/run_tunnel.sh

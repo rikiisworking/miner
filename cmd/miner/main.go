@@ -20,9 +20,14 @@ import (
 )
 
 func main() {
+	// Optional repo-root .env (gitignored). Existing process env always wins.
+	if err := loadDotEnv(".env"); err != nil {
+		log.Fatalf("load .env: %v", err)
+	}
+
 	pin := os.Getenv("MINER_PIN")
 	if pin == "" {
-		log.Fatal("MINER_PIN is required (shared PIN; not committed to source)")
+		log.Fatal("MINER_PIN is required (set in .env or environment; see .env.example)")
 	}
 
 	addr := os.Getenv("MINER_ADDR")

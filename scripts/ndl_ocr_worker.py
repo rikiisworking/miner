@@ -46,6 +46,11 @@ def _build_args(src: Path) -> Namespace:
     device = os.environ.get("MINER_NDL_DEVICE", "cpu").strip() or "cpu"
     if device not in ("cpu", "cuda"):
         _fail_startup(f"MINER_NDL_DEVICE must be cpu or cuda, got {device!r}")
+    # NDLOCR-Lite has no Metal/CoreML path; CUDA is Linux/Windows GPU only.
+    if device == "cuda" and sys.platform == "darwin":
+        _fail_startup(
+            "MINER_NDL_DEVICE=cuda is not supported on macOS; use cpu (default)"
+        )
     enable_tcy = os.environ.get("MINER_NDL_ENABLE_TCY", "").strip() in (
         "1",
         "true",

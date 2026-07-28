@@ -190,7 +190,9 @@ internal/adapters/pinauth/    # static shared PIN
 internal/adapters/analyzer/   # Stub JapaneseAnalyzer (fixtures + fallback)
 internal/adapters/ocr/        # NDL / NDLOCR-Lite (prod) + Static (tests)
 scripts/ndl_ocr_worker.py     # long-lived Python worker for NDLOCR-Lite
+scripts/install_ndlocr.sh     # make ocr-install (clone + venv + deps)
 requirements-ocr.txt          # Python deps for the OCR worker venv
+.deps/                        # local NDLOCR-Lite install (gitignored; make ocr-install)
 internal/adapters/queuestore/ # file + mem QueueStore
 internal/httpapi/             # Fiber + session + handlers
 internal/ocrtest/             # OCR fixture loader (tests)
@@ -234,16 +236,13 @@ All mining routes require session except `/` and `POST /unlock`.
 
 ## Quick start (PC)
 
-**Prerequisites:** Go 1.22+ (see `go.mod`), and for photo OCR: NDLOCR-Lite + Python 3.12 (see [OCR](#ocr-ndlocr-lite)).
+**Prerequisites:** Go 1.22+ (see `go.mod`), and for photo OCR: NDLOCR-Lite + Python 3.12/3.11 (see [OCR](#ocr-ndlocr-lite)). Works on **Linux and macOS** (Intel + Apple Silicon).
 
 ```bash
 git clone <repo-url> && cd miner
+make ocr-install                 # NDLOCR-Lite → .deps/ (once; Linux or macOS)
 export MINER_PIN='choose-a-shared-pin'
-# after OCR install (see stepped setup):
-export MINER_NDL_ROOT=~/src/ndlocr-lite
-export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
-export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
-make run
+make run                         # picks up .deps OCR env automatically
 # open http://127.0.0.1:8080
 ```
 
@@ -268,15 +267,42 @@ cd miner
 
 Without NDLOCR-Lite the server **will not start** (production requires a real local OCR engine).
 
-```bash
-# Clone NDL Lab NDLOCR-Lite (models included in repo)
-git clone https://github.com/ndl-lab/ndlocr-lite ~/src/ndlocr-lite
+**Preferred (one command):**
 
-# Python 3.12 venv (3.14 may not have onnxruntime wheels)
-# using uv (recommended) or python3.12 -m venv
+```bash
+make ocr-install
+# → clones into .deps/ndlocr-lite, creates Python 3.12 (or 3.11/3.10) venv, installs requirements-ocr.txt
+# re-run anytime; skips work if already healthy (OCR_UPDATE=1 to force refresh)
+```
+
+Needs: `git`, and either [uv](https://github.com/astral-sh/uv) (recommended) or `python3.12` / `3.11` / `3.10`.
+
+| OS | Notes |
+|----|--------|
+| **Linux** | Default path; `MINER_NDL_DEVICE=cpu` (or `cuda` if onnxruntime-gpu + CUDA) |
+| **macOS** | Intel + Apple Silicon; always **CPU** (`MINER_NDL_DEVICE=cpu`). Prefer `brew install python@3.12` or uv. Do not use system Python 3.14 for OCR wheels. |
+
+`make run` then uses `.deps` automatically when `MINER_NDL_*` are unset. Print exports with `make ocr-env`.
+
+**macOS example:**
+
+```bash
+# optional helpers
+brew install go git
+curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
+# brew install python@3.12   # if not using uv to fetch Python
+
+make ocr-install
+export MINER_PIN='your-shared-pin'
+make run
+```
+
+**Manual install** (custom path):
+
+```bash
+git clone https://github.com/ndl-lab/ndlocr-lite ~/src/ndlocr-lite
 uv venv ~/src/ndlocr-lite/.venv --python 3.12
 uv pip install --python ~/src/ndlocr-lite/.venv/bin/python -r requirements-ocr.txt
-
 export MINER_NDL_ROOT=~/src/ndlocr-lite
 export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
 export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
@@ -446,22 +472,20 @@ HTTPS is not required for many phones on LAN, but some browsers are stricter abo
 | `MINER_ADDR` | no | `:8080` | Listen address (`:8080` = all interfaces) |
 | `MINER_WEB_ROOT` | no | *(embedded)* | Disk override of `templates/` + `static/` |
 | `MINER_DATA_DIR` | no | `data` | Durable queue directory (`queue.json`) |
-| `MINER_NDL_ROOT` | **yes** (prod) | — | Absolute path to [ndlocr-lite](https://github.com/ndl-lab/ndlocr-lite) clone |
-| `MINER_NDL_PYTHON` | recommended | `python3` | Venv interpreter with `requirements-ocr.txt` deps |
-| `MINER_NDL_WORKER` | recommended | auto-discover `scripts/ndl_ocr_worker.py` | Path to miner’s worker script |
-| `MINER_NDL_DEVICE` | no | `cpu` | `cpu` or `cuda` (GPU needs onnxruntime-gpu + CUDA) |
+| `MINER_NDL_ROOT` | for OCR | `.deps/ndlocr-lite` via `make` | Absolute path to [ndlocr-lite](https://github.com/ndl-lab/ndlocr-lite) clone |
+| `MINER_NDL_PYTHON` | for OCR | `.deps/.../.venv/bin/python` via `make` | Venv interpreter with `requirements-ocr.txt` deps |
+| `MINER_NDL_WORKER` | for OCR | `scripts/ndl_ocr_worker.py` via `make` | Path to miner’s worker script |
+| `MINER_NDL_DEVICE` | no | `cpu` | `cpu` or `cuda` (Linux GPU only; **macOS must use `cpu`**) |
 | `MINER_NDL_ENABLE_TCY` | no | off | `1` / `true` enables 縦中横 helper in the worker |
 
 Example full launch:
 
 ```bash
+make ocr-install   # once
 export MINER_PIN='household-pin'
 export MINER_ADDR=:8080
 export MINER_DATA_DIR="$HOME/.local/share/miner"
-export MINER_NDL_ROOT=~/src/ndlocr-lite
-export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
-export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
-make run
+make run           # MINER_NDL_* default to .deps/
 ```
 
 ---
@@ -503,34 +527,37 @@ On startup the worker emits `{"ready":true}` after models load; miner waits (def
 
 **Product hygiene stays in MiningApp:** inter-CJK space strip and blank-line collapse via `NormalizePageText`. The adapter returns engine text only.
 
-### Install (home PC, CPU)
+### Install (home PC, CPU) — Linux & macOS
 
-Needs **Python 3.12** (or 3.11). System Python 3.14 often lacks `onnxruntime` wheels — use [uv](https://github.com/astral-sh/uv) or a 3.12 venv.
+**Preferred:**
 
 ```bash
-# 1) NDLOCR-Lite (models live under src/model/*.onnx — not vendored into miner)
-git clone https://github.com/ndl-lab/ndlocr-lite ~/src/ndlocr-lite
-
-# 2) Venv + deps (from the miner repo root)
-cd /path/to/miner
-uv venv ~/src/ndlocr-lite/.venv --python 3.12
-uv pip install --python ~/src/ndlocr-lite/.venv/bin/python -r requirements-ocr.txt
-
-# 3) Point miner at the install
-export MINER_NDL_ROOT=~/src/ndlocr-lite
-export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
-export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
+make ocr-install          # → .deps/ndlocr-lite + venv + deps (idempotent)
 export MINER_PIN='your-shared-pin'
-make run
+make run                  # uses .deps when MINER_NDL_* unset
 ```
 
-Without `pip`/`uv`, the same deps are listed in upstream `ndlocr-lite/requirements.txt` (includes GUI extras you can skip). Prefer miner’s `requirements-ocr.txt` for a lean worker-only install.
+Needs **git** and either [uv](https://github.com/astral-sh/uv) (recommended) or Python **3.12 / 3.11 / 3.10**. System Python 3.14 often lacks `onnxruntime` wheels.
 
-**Verify worker alone** (optional):
+| Helper | Action |
+|--------|--------|
+| `make ocr-install` | Clone + venv + `requirements-ocr.txt` into `.deps/` (gitignored) |
+| `make ocr-env` | Print `export MINER_NDL_*=…` for the default/current paths |
+| `OCR_UPDATE=1 make ocr-install` | `git pull` + reinstall deps |
+
+| Platform | Runtime | Notes |
+|----------|---------|--------|
+| Linux x86_64 / arm64 | CPU or optional CUDA | `MINER_NDL_DEVICE=cpu` (default) or `cuda` |
+| macOS Intel | CPU | `onnxruntime==1.23.2` pin; no CUDA |
+| macOS Apple Silicon | CPU | same; first model load a few seconds |
+
+**Manual** (custom location): set `MINER_NDL_ROOT` / `MINER_NDL_PYTHON` / `MINER_NDL_WORKER` yourself; see stepped setup.
+
+**Verify worker alone** (optional, after install):
 
 ```bash
-export MINER_NDL_ROOT=~/src/ndlocr-lite
-~/src/ndlocr-lite/.venv/bin/python scripts/ndl_ocr_worker.py
+make ocr-env   # copy exports, or rely on .deps defaults
+.deps/ndlocr-lite/.venv/bin/python scripts/ndl_ocr_worker.py
 # expect one line: {"ready": true}
 # then type (example): {"id":"1","image_path":"testdata/ocr/images/01_single_sentence.png"}
 # Ctrl+D to exit
@@ -573,17 +600,13 @@ Miner (this repo) remains **MIT**; keep NDL credit when you redistribute the OCR
 | Contract | Optional | `make ocr-contract` or `MINER_OCR_CONTRACT=1` |
 
 ```bash
-export MINER_NDL_ROOT=~/src/ndlocr-lite
-export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
-export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
+make ocr-install   # if not already installed
 
-# smoke (skips if env missing)
+# smoke (skips if engine missing)
 go test ./internal/adapters/ocr/ -count=1 -run 'Smoke' -timeout 3m -v
 
 # full fixture contract (happy / vertical / blur / brightness / font / …)
 make ocr-contract
-# equivalent:
-# MINER_OCR_CONTRACT=1 go test ./internal/adapters/ocr/ -run Contract -count=1 -timeout 15m -v
 ```
 
 Fixtures: `testdata/ocr/` (55 cases). Tags: **happy**, **vertical**, **novel**, **blur**, **brightness**, **font**, **thickness**, **colour**, **tilt**, etc. Soft (log-only) IDs for known-hard phone stress live in `internal/adapters/ocr/ndl_test.go`.
@@ -691,8 +714,10 @@ HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not han
 
 | Target | Action |
 |--------|--------|
-| `make run` | Build + run (needs `MINER_PIN` + `MINER_NDL_*` for OCR) |
-| `make build` | `bin/miner` |
+| `make ocr-install` | Install NDLOCR-Lite into `.deps/` (clone + venv + deps) |
+| `make ocr-env` | Print `MINER_NDL_*` export lines |
+| `make run` | Build + run (needs `MINER_PIN`; OCR from env or `.deps`) |
+| `make build` | `bin/miner` (no OCR install required) |
 | `make test` | Full suite (120s timeout; `ocr.Static` only) |
 | `make test-unit` | `./internal/...` |
 | `make test-e2e` | `./e2e/...` |

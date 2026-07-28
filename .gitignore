@@ -24,3 +24,6 @@ vendor/
 *.sqlite3
 tmp/
 data/
+
+# Local NDLOCR-Lite install (make ocr-install)
+.deps/

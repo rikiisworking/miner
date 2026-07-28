@@ -47,9 +47,14 @@ func main() {
 	}
 	defer ocrEngine.Close()
 
+	ja, err := analyzer.NewKagome()
+	if err != nil {
+		log.Fatalf("Japanese analyzer: %v", err)
+	}
+
 	mining := app.NewMiningApp(
 		pinauth.Static{Secret: pin},
-		analyzer.Stub{},
+		ja,
 		queuestore.NewFile(queuePath),
 		ocrEngine,
 	)

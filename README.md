@@ -79,7 +79,7 @@ flowchart TB
   end
   subgraph ADP["internal/adapters"]
     A1[pinauth.Static]
-    A2[analyzer.Stub]
+    A2[analyzer.Kagome / Stub]
     A3[queuestore.File / Mem]
     A4[ocr.NDL / Static]
   end
@@ -187,7 +187,7 @@ cmd/miner/                    # process entry, LAN hints, resolveWebFS
 internal/app/                 # MiningApp facade (primary test seam)
 internal/ports/               # PinAuth, JapaneseAnalyzer, QueueStore, OcrEngine
 internal/adapters/pinauth/    # static shared PIN
-internal/adapters/analyzer/   # Stub JapaneseAnalyzer (fixtures + fallback)
+internal/adapters/analyzer/   # Kagome (prod) + Stub (tests) JapaneseAnalyzer
 internal/adapters/ocr/        # NDL / NDLOCR-Lite (prod) + Static (tests)
 scripts/ndl_ocr_worker.py     # long-lived Python worker for NDLOCR-Lite
 scripts/install_ndlocr.sh     # make ocr-install (clone + venv + deps)
@@ -679,9 +679,9 @@ HTMX is **vendored** at `web/static/htmx.min.js` (no CDN) so UI tests do not han
 ### Analyze
 
 - `POST /analyze` requires session.  
-- Force-error hook for demos/tests: paste `__analyze_error__`.  
-- Production analyzer is still **`analyzer.Stub`** (fixture sentences + whole-text fallback) until a real local morphological engine is chosen.  
-- Known fixtures: `私は本を読む。`, `病院に行った。`.
+- Production: **`analyzer.Kagome`** (kagome + MeCab-IPADIC, pure Go — no host install).  
+- Tests/L1–L3 keep **`analyzer.Stub`** (fixtures + force-error `__analyze_error__`).  
+- Content-word baseline: keep nouns/verbs/adjectives/na-adj stems/adverbs/…; drop particles, aux, symbols, conjunctions.
 
 ### Camera (ticket 07)
 

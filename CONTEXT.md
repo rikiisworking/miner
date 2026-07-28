@@ -14,7 +14,7 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 | **PinAuth** | Port: verify shared PIN. |
 | **OcrEngine** | Port: `Recognize(ctx, image) → text` (local only). Ticket 06. Prod: `adapters/ocr.NDL` (NDLOCR-Lite Python worker; engine text only, no product normalize). Test: `adapters/ocr.Static`. Product page-text hygiene: **NormalizePageText** on MiningApp before SplitSentences. Attribution: NDLOCR-Lite / NDL Lab, CC BY 4.0. |
 | **NormalizePageText** | Pure helper: inter-CJK space strip + blank-line collapse. Used by IngestPage and ProposeSentences. |
-| **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. |
+| **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. Prod: `adapters/analyzer.Kagome` (kagome + MeCab-IPADIC, pure Go). Test: `adapters/analyzer.Stub`. |
 | **QueueStore** | Port: durable queue entries. File JSON + Mem adapters. Surface: **Create**, **List** (unordered), **AppendUnknown** → `AppendResult`, **ClearAll**. Product display/export order lives on **MiningApp.ListQueue** / **ExportMarkdown** (FirstUnknownAt, then id). Sentinels: `queuestore.ErrEmptyID`, `ErrDuplicateID`. |
 | **IngestPage** | MiningApp: image → OCR (ctx, **MaxIngestDuration**) → **NormalizePageText** → candidates. Empty image → **ErrEmptyImage**; empty OCR text → **ErrEmptyPage**. Single-flight **ErrIngestBusy**; cancel **ErrIngestCanceled**. Never writes queue. |
 | **Queue entry** | Stable id + sentence text + ordered unique unknowns + first-unknown-at. New mining pass ⇒ new id (no merge-by-text). |
@@ -52,7 +52,7 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 ## Seams
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
-2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer stub, ocr NDL / Static, queuestore file + mem for tests).
+2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer Kagome / Stub, ocr NDL / Static, queuestore file + mem for tests).
 3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text / photo-ingest candidates (`POST /ingest`), analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `htmx_error` fragment (never a feature partial).
 4. **web.FS()** — templates + static assets (embed by default).
 

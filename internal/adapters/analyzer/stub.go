@@ -5,8 +5,8 @@
 //	Keep as Content=true:  nouns, verbs, adjectives, adjectival nouns (na-adj), similar content.
 //	Drop as Content=false: particles, auxiliary verbs, symbols, punctuation, pure function words.
 //
-// This stub does not run a real morphological engine. It serves fixed fixtures for demos/tests
-// and a one-token fallback for arbitrary paste text until a real local engine is wired.
+// Production: Kagome (MeCab-IPADIC) via NewKagome — pure Go, no host install.
+// Tests/L1–L3 harnesses: Stub (deterministic fixtures + error hooks).
 package analyzer
 
 import (

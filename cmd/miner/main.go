@@ -41,10 +41,11 @@ func main() {
 		log.Fatalf("web assets: %v", err)
 	}
 
-	ocrEngine, err := ocr.NewTesseractFromEnv()
+	ocrEngine, err := ocr.NewNDLFromEnv()
 	if err != nil {
-		log.Fatalf("OCR engine: %v\nInstall local tesseract with Japanese data, e.g.:\n  sudo apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert\nOr set MINER_TESSERACT and MINER_TESSDATA_PREFIX to a user-local install.", err)
+		log.Fatalf("OCR engine: %v\nInstall NDLOCR-Lite (local Japanese book OCR), then set:\n  git clone https://github.com/ndl-lab/ndlocr-lite ~/src/ndlocr-lite\n  # python 3.12 venv + pip install -r requirements-ocr.txt (see repo)\n  export MINER_NDL_ROOT=~/src/ndlocr-lite\n  export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python\n  export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py", err)
 	}
+	defer ocrEngine.Close()
 
 	mining := app.NewMiningApp(
 		pinauth.Static{Secret: pin},

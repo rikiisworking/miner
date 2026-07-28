@@ -19,7 +19,7 @@ import (
 )
 
 // defaultTestOCR is used when a test never exercises Recognize (PIN, analyze, queue).
-// Prefer ocr.Static over MustEngine so hosts without tesseract stay green.
+// Prefer ocr.Static over MustEngine so hosts without NDLOCR-Lite stay green.
 var defaultTestOCR = ocr.Static{Text: "私は本を読む。"}
 
 func newApp(t *testing.T, ja ports.JapaneseAnalyzer) *app.MiningApp {
@@ -36,7 +36,7 @@ func newAppWithQueue(t *testing.T, ja ports.JapaneseAnalyzer, queue ports.QueueS
 }
 
 // newAppWithOCR builds MiningApp with an explicit OcrEngine.
-// Pass nil only from tests that need the real Tesseract CLI (MustEngine).
+// Pass nil only from tests that need the real NDLOCR-Lite engine (MustEngine).
 func newAppWithOCR(t *testing.T, o ports.OcrEngine) *app.MiningApp {
 	t.Helper()
 	if o == nil {
@@ -760,7 +760,7 @@ func TestIngestPage_OCRTextToCandidates(t *testing.T) {
 }
 
 func TestIngestPage_OCRTextToCandidates_StaticEngine(t *testing.T) {
-	// Product rules (split → candidates, no queue write) without host tesseract.
+	// Product rules (split → candidates, no queue write) without host NDLOCR-Lite.
 	m := newAppWithOCR(t, ocr.Static{Text: "病院に行った。\n私は本を読む。"})
 	got, err := m.IngestPage(context.Background(), []byte("fake-image"))
 	if err != nil {

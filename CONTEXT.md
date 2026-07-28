@@ -12,7 +12,7 @@ Home-PC web app: phone on LAN unlocks with a shared PIN, mines Japanese novel se
 |------|---------|
 | **MiningApp** | Application facade for all product use-cases. **Primary test seam** (L1). |
 | **PinAuth** | Port: verify shared PIN. |
-| **OcrEngine** | Port: `Recognize(ctx, image) → text` (local only). Ticket 06. Prod: `adapters/ocr.Tesseract` (CLI; engine stdout, no product normalize). Test: `adapters/ocr.Static`. Product page-text hygiene: **NormalizePageText** on MiningApp before SplitSentences. |
+| **OcrEngine** | Port: `Recognize(ctx, image) → text` (local only). Ticket 06. Prod: `adapters/ocr.NDL` (NDLOCR-Lite Python worker; engine text only, no product normalize). Test: `adapters/ocr.Static`. Product page-text hygiene: **NormalizePageText** on MiningApp before SplitSentences. Attribution: NDLOCR-Lite / NDL Lab, CC BY 4.0. |
 | **NormalizePageText** | Pure helper: inter-CJK space strip + blank-line collapse. Used by IngestPage and ProposeSentences. |
 | **JapaneseAnalyzer** | Port: sentence → tokens (surface, reading, content vs not). Ticket 02. |
 | **QueueStore** | Port: durable queue entries. File JSON + Mem adapters. Surface: **Create**, **List** (unordered), **AppendUnknown** → `AppendResult`, **ClearAll**. Product display/export order lives on **MiningApp.ListQueue** / **ExportMarkdown** (FirstUnknownAt, then id). Sentinels: `queuestore.ErrEmptyID`, `ErrDuplicateID`. |
@@ -52,7 +52,7 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 ## Seams
 
 1. **MiningApp** — product rules and L1 tests. HTTP must not re-implement business rules.
-2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer stub, ocr Tesseract, queuestore file + mem for tests).
+2. **Ports** (`internal/ports`) — PinAuth + JapaneseAnalyzer + QueueStore + OcrEngine. Adapters under `internal/adapters/` (pinauth, analyzer stub, ocr NDL / Static, queuestore file + mem for tests).
 3. **httpapi** — Fiber, cookies, templates, static files. Thin map: request → MiningApp → HTML/file. BodyLimit = MaxUploadBytes + multipart margin. HTMX partials for page-text / photo-ingest candidates (`POST /ingest`), analyze, unknown feedback; full pages for shell/queue. Session gate deny for HTMX uses generic `htmx_error` fragment (never a feature partial).
 4. **web.FS()** — templates + static assets (embed by default).
 
@@ -63,9 +63,9 @@ Rules: never merge by sentence text alone; same `pass_id` → same entry; new an
 | L1 | `internal/app` (+ pure helpers) | Product rules via MiningApp; `queuestore.Mem` / file store + `pinauth.Static` + default `ocr.Static` |
 | L2 | `internal/httpapi` | Fiber `app.Test`; session/HTML; pass_id transport; default `ocr.Static` |
 | L3 | `e2e` | Headless browser clicks; local assets; default `ocr.Static` |
-| OCR-real | selected tests only | `ocr.MustEngine` (host tesseract + jpn/jpn_vert); **skips** if missing |
+| OCR-real | selected tests only | `ocr.MustEngine` (host NDLOCR-Lite + `MINER_NDL_*`); **skips** if missing |
 
-Command: `make test` (full suite). Shared test doubles: `queuestore.NewMem()`, `pinauth.Static`, `ocr.Static` (not package-local copies). Real Tesseract only for tests that intentionally prove the CLI.
+Command: `make test` (full suite). Shared test doubles: `queuestore.NewMem()`, `pinauth.Static`, `ocr.Static` (not package-local copies). Real NDLOCR-Lite only for tests that intentionally prove the worker.
 
 ## Architectural rule (C1)
 

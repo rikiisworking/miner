@@ -4,7 +4,7 @@ Synthetic **page-image** cases for local OCR ingest. Primary material = novel pr
 
 | Layer | How these are used |
 |-------|--------------------|
-| **L1** MiningApp | Real `ocr.Tesseract` + fixture images (size/busy still pure rules). |
+| **L1** MiningApp | Real `ocr.NDL` (NDLOCR-Lite) + fixture images (size/busy still pure rules). |
 | **L2** HTTP | Multipart upload of fixture images (`02_multi_sentence`, `19_not_an_image`, oversize buffer). |
 | **L3** UI | File-input journey with happy image + non-image error fixture. |
 | **Adapter contract** (optional) | `MINER_OCR_CONTRACT=1`: suites by tag — happy, vertical, blur, brightness, font, thickness, colour — vs `expected_text` / `min_overlap`. Known-weak IDs soft-log only. |
@@ -140,8 +140,10 @@ Contract tests (real engine) skip unless `MINER_OCR_CONTRACT=1`:
 
 ```bash
 export MINER_OCR_CONTRACT=1
-# MINER_TESSERACT / MINER_TESSDATA_PREFIX if not on PATH
-go test ./internal/adapters/ocr/ -run 'Contract' -count=1 -timeout 5m -v
+export MINER_NDL_ROOT=~/src/ndlocr-lite
+export MINER_NDL_PYTHON=~/src/ndlocr-lite/.venv/bin/python
+export MINER_NDL_WORKER=$PWD/scripts/ndl_ocr_worker.py
+go test ./internal/adapters/ocr/ -run 'Contract' -count=1 -timeout 15m -v
 ```
 
-Soft (log-only) under default engine: some vertical columns, strong tilt+blur compounds, mixed lighting extremes — see `contractSoftIDs` in `tesseract_test.go`.
+Soft (log-only) under NDLOCR-Lite: strong tilt+blur compounds, mixed lighting extremes — see `contractSoftIDs` in `ndl_test.go`.

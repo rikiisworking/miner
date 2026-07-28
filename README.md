@@ -113,15 +113,18 @@ export MINER_TESSERACT=/path/to/tesseract
 export MINER_TESSDATA_PREFIX=/path/to/tessdata   # dir containing jpn.traineddata
 ```
 
-**Tests require local tesseract** (same binary as production). Optional stricter overlap suite:
+**Tests require local tesseract** (same binary as production). Optional real-engine contract suites (overlap vs `cases.json`):
 
 ```bash
 export MINER_OCR_CONTRACT=1
 # ensure tesseract + jpn on PATH / MINER_*
-go test ./internal/adapters/ocr/ -count=1 -run Contract
+go test ./internal/adapters/ocr/ -count=1 -run Contract -timeout 5m
 ```
 
-Synthetic page fixtures: `testdata/ocr/`. Primary material = novel prose; vertical pages use `jpn_vert` (best-effort; edit sentence if OCR wrong).
+Contract dimensions (fixture tags): **happy**, **vertical**, **blur**, **brightness**, **font**, **thickness**, **colour**.  
+Thresholds from each case `min_overlap`. A small soft-list logs known-weak shots (empty/near-empty OCR) without failing the suite — product safety net remains sentence edit.
+
+Synthetic page fixtures: `testdata/ocr/` (55 cases). Primary material = novel prose; vertical pages use `jpn_vert` (best-effort; edit sentence if OCR wrong).
 
 | Method | Path | Body / notes |
 |--------|------|----------------|

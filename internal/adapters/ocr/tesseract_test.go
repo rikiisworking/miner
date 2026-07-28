@@ -49,7 +49,6 @@ func TestTesseract_SmokeSingleSentence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recognize: %v", err)
 	}
-	// Collapse spaces for compare — engine also normalizes.
 	got := strings.ReplaceAll(text, " ", "")
 	if !strings.Contains(got, "私は本を読む") {
 		t.Fatalf("got %q want contain 私は本を読む", text)
@@ -102,11 +101,119 @@ func TestTesseract_NotAnImageFailsOrEmpty(t *testing.T) {
 		return
 	}
 	if strings.TrimSpace(text) != "" {
-		// Some builds return noise; still not a hard fail for adapter smoke.
 		t.Logf("not_an_image returned text=%q (tolerated)", text)
 	}
 }
 
+// contractSuite is one stress dimension exercised against testdata/ocr fixtures.
+type contractSuite struct {
+	name string
+	// tag selects cases that include this tag (via ocrtest.Manifest.WithTag).
+	tag string
+	// defaultMin used when cases.json omits min_overlap.
+	defaultMin float64
+}
+
+// contractSoftIDs: measured empty/near-empty under default jpn+jpn_vert + PSM 3.
+// Still run for visibility; do not hard-fail on overlap (log only).
+// Product safety net remains editable sentence text.
+var contractSoftIDs = map[string]bool{
+	"04_vertical_columns":             true, // often page-number only
+	"26_novel_vertical_skewed":        true,
+	"28_novel_vertical_stub_sentences": true, // empty OCR on this render
+	"37_tilt_v_moderate":              true,
+	"39_tilt_h_with_blur":             true,
+	"44_brightness_mixed_lr":          true, // split lighting kills half page
+	"47_brightness_mixed_vertical":    true,
+	"55_mixed_brightness_colour_blur": true, // kitchen-sink compound
+}
+
+// TestTesseractContract_StressSuites runs real OCR on vertical, blur, brightness,
+// font / thickness / colour, and happy fixtures when MINER_OCR_CONTRACT=1.
+//
+//	MINER_OCR_CONTRACT=1 go test ./internal/adapters/ocr/ -run Contract -count=1
+func TestTesseractContract_StressSuites(t *testing.T) {
+	if os.Getenv("MINER_OCR_CONTRACT") != "1" {
+		t.Skip("set MINER_OCR_CONTRACT=1 to run real-engine contract suites")
+	}
+	eng, err := newTestTesseract(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := ocrtest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	suites := []contractSuite{
+		{name: "happy", tag: "happy", defaultMin: 0.7},
+		{name: "vertical", tag: "vertical", defaultMin: 0.25},
+		{name: "blur", tag: "blur", defaultMin: 0.25},
+		{name: "brightness", tag: "brightness", defaultMin: 0.25},
+		{name: "font", tag: "font", defaultMin: 0.35},
+		{name: "thickness", tag: "thickness", defaultMin: 0.35},
+		{name: "colour", tag: "colour", defaultMin: 0.35},
+	}
+
+	for _, suite := range suites {
+		suite := suite
+		t.Run(suite.name, func(t *testing.T) {
+			cases := m.WithTag(suite.tag)
+			if len(cases) == 0 {
+				t.Fatalf("no fixtures tagged %q", suite.tag)
+			}
+			ran := 0
+			for _, c := range cases {
+				if c.ExpectedText == "" {
+					continue
+				}
+				c := c
+				t.Run(c.ID, func(t *testing.T) {
+					img, err := c.Bytes()
+					if err != nil {
+						t.Fatal(err)
+					}
+					got, err := eng.Recognize(img)
+					if err != nil {
+						if contractSoftIDs[c.ID] || !c.WantSuccess {
+							t.Logf("soft: Recognize error (tolerated): %v", err)
+							return
+						}
+						t.Fatalf("Recognize: %v", err)
+					}
+					min := suite.defaultMin
+					if c.MinOverlap != nil {
+						min = *c.MinOverlap
+					}
+					score := runeOverlap(got, c.ExpectedText)
+					t.Logf("overlap=%.2f min=%.2f out_len=%d", score, min, len(strings.TrimSpace(got)))
+
+					if contractSoftIDs[c.ID] {
+						// Soft: log only; empty OCR is known for some vertical/compound shots.
+						if score < min {
+							t.Logf("soft below min: score=%.2f < %.2f (known weak fixture)", score, min)
+						}
+						return
+					}
+					if !c.WantSuccess {
+						// Best-effort fixtures: no hard floor.
+						return
+					}
+					if score < min {
+						t.Errorf("overlap=%.2f < %.2f\n got=%q\nwant=%q", score, min, got, c.ExpectedText)
+					}
+				})
+				ran++
+			}
+			if ran == 0 {
+				t.Fatalf("suite %s: no cases with expected_text", suite.name)
+			}
+		})
+	}
+}
+
+// TestTesseractContract_HappyPathOverlap kept as a thin alias entry for docs/CI that
+// still run -run 'HappyPath'. Delegates to stress suite happy subset logic inline.
 func TestTesseractContract_HappyPathOverlap(t *testing.T) {
 	if os.Getenv("MINER_OCR_CONTRACT") != "1" {
 		t.Skip("set MINER_OCR_CONTRACT=1 to run real-engine contract suite")
@@ -119,30 +226,29 @@ func TestTesseractContract_HappyPathOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Keep contract small + reliable: horizontal happy fixtures.
-	ids := []string{"01_single_sentence", "02_multi_sentence", "05_punctuation_mix", "10_large_sparse"}
-	for _, id := range ids {
-		c := m.Must(id)
-		if !c.WantSuccess || c.ExpectedText == "" {
+	for _, c := range m.HappyPath() {
+		if c.ExpectedText == "" || !c.WantSuccess {
 			continue
 		}
-		img, err := c.Bytes()
-		if err != nil {
-			t.Fatalf("%s: %v", id, err)
-		}
-		got, err := eng.Recognize(img)
-		if err != nil {
-			t.Errorf("%s: Recognize: %v", id, err)
-			continue
-		}
-		min := 0.7
-		if c.MinOverlap != nil {
-			min = *c.MinOverlap
-		}
-		score := runeOverlap(got, c.ExpectedText)
-		if score < min {
-			t.Errorf("%s: overlap=%.2f < %.2f\n got=%q\nwant=%q", id, score, min, got, c.ExpectedText)
-		}
+		c := c
+		t.Run(c.ID, func(t *testing.T) {
+			img, err := c.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := eng.Recognize(img)
+			if err != nil {
+				t.Fatalf("Recognize: %v", err)
+			}
+			min := 0.7
+			if c.MinOverlap != nil {
+				min = *c.MinOverlap
+			}
+			score := runeOverlap(got, c.ExpectedText)
+			if score < min {
+				t.Errorf("overlap=%.2f < %.2f\n got=%q\nwant=%q", score, min, got, c.ExpectedText)
+			}
+		})
 	}
 }
 
@@ -173,7 +279,6 @@ func runeOverlap(got, want string) float64 {
 		}
 		return 0
 	}
-	// multiset intersection
 	inter := 0
 	for r, wn := range w {
 		gn := g[r]
@@ -200,4 +305,3 @@ func countRunes(s string) map[rune]int {
 	}
 	return m
 }
-

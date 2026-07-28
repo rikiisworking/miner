@@ -7,7 +7,7 @@ Synthetic **page-image** cases for local OCR ingest. Primary material = novel pr
 | **L1** MiningApp | Real `ocr.Tesseract` + fixture images (size/busy still pure rules). |
 | **L2** HTTP | Multipart upload of fixture images (`02_multi_sentence`, `19_not_an_image`, oversize buffer). |
 | **L3** UI | File-input journey with happy image + non-image error fixture. |
-| **Adapter contract** (optional) | `MINER_OCR_CONTRACT=1` vs `cases.json` `expected_text` / `min_overlap`. |
+| **Adapter contract** (optional) | `MINER_OCR_CONTRACT=1`: suites by tag — happy, vertical, blur, brightness, font, thickness, colour — vs `expected_text` / `min_overlap`. Known-weak IDs soft-log only. |
 
 ## Layout
 
@@ -136,4 +136,12 @@ c := m.Must("01_single_sentence")
 b, err := c.Bytes()
 ```
 
-Contract tests (real engine) can skip unless `MINER_OCR_CONTRACT=1`.
+Contract tests (real engine) skip unless `MINER_OCR_CONTRACT=1`:
+
+```bash
+export MINER_OCR_CONTRACT=1
+# MINER_TESSERACT / MINER_TESSDATA_PREFIX if not on PATH
+go test ./internal/adapters/ocr/ -run 'Contract' -count=1 -timeout 5m -v
+```
+
+Soft (log-only) under default engine: some vertical columns, strong tilt+blur compounds, mixed lighting extremes — see `contractSoftIDs` in `tesseract_test.go`.

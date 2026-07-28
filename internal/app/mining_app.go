@@ -33,27 +33,47 @@ var ErrEmptySurface = errors.New("empty surface")
 // ErrEntryNotFound is returned when AddUnknown references an unknown entry id.
 var ErrEntryNotFound = errors.New("queue entry not found")
 
+// ErrEmptyPage is returned when page text / OCR yields no sentence candidates.
+var ErrEmptyPage = errors.New("empty page")
+
+// ErrPayloadTooLarge is returned when an image payload exceeds MaxUploadBytes.
+var ErrPayloadTooLarge = errors.New("payload too large")
+
+// ErrOcrFailed is returned when the OcrEngine fails (wrapped with cause).
+var ErrOcrFailed = errors.New("ocr failed")
+
+// ErrIngestBusy is returned when a second IngestPage runs while one is in flight.
+var ErrIngestBusy = errors.New("ingest busy")
+
+// MaxUploadBytes is the product cap for photo ingest (ticket 06 / spec): 10 MiB.
+// HTTP BodyLimit and L1 IngestPage share this number; ocrtest asserts fixtures against it.
+const MaxUploadBytes = 10 * 1024 * 1024
+
 // MiningApp is the application facade for product use-cases.
 // HTTP adapters stay thin over this type.
 type MiningApp struct {
 	pinAuth  ports.PinAuth
 	analyzer ports.JapaneseAnalyzer
 	queue    ports.QueueStore
+	ocr      ports.OcrEngine
 
 	// mu guards openPasses (ephemeral analyze-pass → entry binding).
+	// Never hold across OCR or other long work — use ingestMu for single-flight ingest.
 	mu sync.Mutex
 	// openPasses maps pass id (from AnalyzeSentence) to queue entry id after first unknown.
 	// Prevents concurrent empty-entry_id taps from creating multiple entries for one pass.
 	openPasses map[string]string
 
-	// now is injectable for tests; nil means time.Now.
-	now func() time.Time
-	// newID is injectable for tests; nil means random hex id.
-	newID func() (string, error)
+	// ingestMu serializes IngestPage (single-flight). Separate from pass mu so
+	// mark-unknown never waits on OCR I/O.
+	ingestMu sync.Mutex
+	// ingesting is true while IngestPage holds the single-flight slot.
+	ingesting bool
 }
 
 // NewMiningApp constructs the facade with required ports.
-func NewMiningApp(pinAuth ports.PinAuth, analyzer ports.JapaneseAnalyzer, queue ports.QueueStore) *MiningApp {
+// ocr may be a stub until a real local engine is wired; IngestPage requires a non-nil engine.
+func NewMiningApp(pinAuth ports.PinAuth, analyzer ports.JapaneseAnalyzer, queue ports.QueueStore, ocr ports.OcrEngine) *MiningApp {
 	if pinAuth == nil {
 		panic("pinAuth is required")
 	}
@@ -63,10 +83,14 @@ func NewMiningApp(pinAuth ports.PinAuth, analyzer ports.JapaneseAnalyzer, queue 
 	if queue == nil {
 		panic("queue is required")
 	}
+	if ocr == nil {
+		panic("ocr is required")
+	}
 	return &MiningApp{
 		pinAuth:    pinAuth,
 		analyzer:   analyzer,
 		queue:      queue,
+		ocr:        ocr,
 		openPasses: map[string]string{},
 	}
 }
@@ -102,7 +126,7 @@ func (m *MiningApp) AnalyzeSentence(text string) (SentenceAnalysis, error) {
 
 	tokens, err := m.analyzer.Analyze(text)
 	if err != nil {
-		return SentenceAnalysis{}, fmt.Errorf("%w: %v", ErrAnalyze, err)
+		return SentenceAnalysis{}, fmt.Errorf("%w: %w", ErrAnalyze, err)
 	}
 	if tokens == nil {
 		tokens = []ports.Token{}
@@ -318,17 +342,67 @@ func (m *MiningApp) ClearAll() error {
 	return nil
 }
 
-func (m *MiningApp) clock() time.Time {
-	if m.now != nil {
-		return m.now()
+// PageIngest is the result of IngestPage: raw OCR text plus sentence candidates.
+// Ephemeral only — never written to the durable queue.
+// On success both Text and Candidates are non-empty.
+type PageIngest struct {
+	// Text is trimmed OCR output.
+	Text string
+	// Candidates are sentence proposals for the existing pick → analyze pipeline.
+	Candidates []string
+}
+
+// IngestPage runs local OCR on image bytes and proposes sentence candidates.
+//
+// Rules:
+//   - len(image) == 0 → ErrEmptyPage
+//   - len(image) > MaxUploadBytes → ErrPayloadTooLarge (OCR not run)
+//   - only one ingest at a time (ErrIngestBusy if concurrent)
+//   - OCR error → ErrOcrFailed (wrapped); queue untouched
+//   - empty / whitespace OCR text → ErrEmptyPage; queue untouched
+//   - success → SplitSentences(text); does not write queue or open analyze passes
+//
+// Callers must discard image bytes after return (success or failure). MiningApp
+// does not retain them.
+func (m *MiningApp) IngestPage(image []byte) (PageIngest, error) {
+	if len(image) == 0 {
+		return PageIngest{}, ErrEmptyPage
 	}
+	if len(image) > MaxUploadBytes {
+		return PageIngest{}, ErrPayloadTooLarge
+	}
+
+	m.ingestMu.Lock()
+	if m.ingesting {
+		m.ingestMu.Unlock()
+		return PageIngest{}, ErrIngestBusy
+	}
+	m.ingesting = true
+	m.ingestMu.Unlock()
+
+	defer func() {
+		m.ingestMu.Lock()
+		m.ingesting = false
+		m.ingestMu.Unlock()
+	}()
+
+	text, err := m.ocr.Recognize(image)
+	if err != nil {
+		return PageIngest{}, fmt.Errorf("%w: %w", ErrOcrFailed, err)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return PageIngest{}, ErrEmptyPage
+	}
+	// Non-empty text always yields ≥1 candidate (SplitSentences contract).
+	return PageIngest{Text: text, Candidates: SplitSentences(text)}, nil
+}
+
+func (m *MiningApp) clock() time.Time {
 	return time.Now().UTC()
 }
 
 func (m *MiningApp) generateID() (string, error) {
-	if m.newID != nil {
-		return m.newID()
-	}
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("generate entry id: %w", err)

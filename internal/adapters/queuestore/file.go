@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/rikiisworking/miner/internal/ports"
@@ -50,44 +49,6 @@ func (f *File) Create(entry ports.QueueEntry) error {
 	return f.save(doc)
 }
 
-// Update implements ports.QueueStore.
-func (f *File) Update(entry ports.QueueEntry) error {
-	if entry.ID == "" {
-		return errors.New("queuestore: empty entry id")
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	doc, err := f.load()
-	if err != nil {
-		return err
-	}
-	for i, e := range doc.Entries {
-		if e.ID == entry.ID {
-			doc.Entries[i] = copyEntry(entry)
-			return f.save(doc)
-		}
-	}
-	return fmt.Errorf("queuestore: entry %q not found", entry.ID)
-}
-
-// Get implements ports.QueueStore.
-func (f *File) Get(id string) (ports.QueueEntry, bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	doc, err := f.load()
-	if err != nil {
-		return ports.QueueEntry{}, false, err
-	}
-	for _, e := range doc.Entries {
-		if e.ID == id {
-			return copyEntry(e), true, nil
-		}
-	}
-	return ports.QueueEntry{}, false, nil
-}
-
 // List implements ports.QueueStore.
 func (f *File) List() ([]ports.QueueEntry, error) {
 	f.mu.Lock()
@@ -127,17 +88,16 @@ func (f *File) AppendUnknown(id, surface string) (ports.QueueEntry, bool, bool, 
 		if e.ID != id {
 			continue
 		}
-		for _, u := range e.Unknowns {
-			if u == surface {
-				return copyEntry(e), false, true, nil
-			}
+		next, added := appendSurfaceIfAbsent(e, surface)
+		if !added {
+			return next, false, true, nil
 		}
-		e.Unknowns = append(append([]string(nil), e.Unknowns...), surface)
-		doc.Entries[i] = copyEntry(e)
+		doc.Entries[i] = next
 		if err := f.save(doc); err != nil {
 			return ports.QueueEntry{}, false, true, err
 		}
-		return copyEntry(doc.Entries[i]), true, true, nil
+		// next is already a deep copy from appendSurfaceIfAbsent.
+		return next, true, true, nil
 	}
 	return ports.QueueEntry{}, false, false, nil
 }
@@ -176,24 +136,4 @@ func (f *File) save(doc fileDoc) error {
 		return err
 	}
 	return os.Rename(tmp, f.path)
-}
-
-// copyEntry deep-copies entry fields. Strings are cloned so callers that pass
-// request-scoped buffers (e.g. Fiber FormValue) cannot corrupt stored data
-// when the next request reuses the buffer.
-func copyEntry(e ports.QueueEntry) ports.QueueEntry {
-	out := ports.QueueEntry{
-		ID:             strings.Clone(e.ID),
-		Sentence:       strings.Clone(e.Sentence),
-		FirstUnknownAt: e.FirstUnknownAt,
-	}
-	if len(e.Unknowns) == 0 {
-		out.Unknowns = []string{}
-		return out
-	}
-	out.Unknowns = make([]string, len(e.Unknowns))
-	for i, u := range e.Unknowns {
-		out.Unknowns[i] = strings.Clone(u)
-	}
-	return out
 }

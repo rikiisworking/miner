@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
+	"github.com/rikiisworking/miner/internal/adapters/ocr"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
@@ -29,7 +30,7 @@ func newTestServerWith(t *testing.T, a ports.JapaneseAnalyzer, q ports.QueueStor
 	if q == nil {
 		q = queuestore.NewMem()
 	}
-	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, a, q)
+	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, a, q, ocr.Stub{})
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
 		WebFS:     web.FS(),

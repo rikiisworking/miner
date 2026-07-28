@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rikiisworking/miner/internal/adapters/ocr"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
@@ -49,7 +50,12 @@ func newAppWithQueue(t *testing.T, analyzer ports.JapaneseAnalyzer, queue ports.
 	if analyzer == nil {
 		analyzer = fakeAnalyzer{}
 	}
-	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue)
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, analyzer, queue, ocr.Stub{})
+}
+
+func newAppWithOCR(t *testing.T, o ports.OcrEngine) *app.MiningApp {
+	t.Helper()
+	return app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, queuestore.NewMem(), o)
 }
 
 func TestUnlock_AcceptsCorrectPIN(t *testing.T) {
@@ -125,10 +131,10 @@ func TestAnalyzeSentence_ContentWordFilter_OmitsParticlesAndFunction(t *testing.
 	// Stub tokens with explicit content vs non-content flags (product rule under test).
 	tokens := []ports.Token{
 		{Surface: "病院", Reading: "びょういん", Content: true}, // noun
-		{Surface: "に", Reading: "", Content: false},          // particle
-		{Surface: "行っ", Reading: "いっ", Content: true},     // verb stem-ish
-		{Surface: "た", Reading: "", Content: false},          // auxiliary
-		{Surface: "。", Reading: "", Content: false},          // punctuation
+		{Surface: "に", Reading: "", Content: false},      // particle
+		{Surface: "行っ", Reading: "いっ", Content: true},    // verb stem-ish
+		{Surface: "た", Reading: "", Content: false},      // auxiliary
+		{Surface: "。", Reading: "", Content: false},      // punctuation
 	}
 	m := newApp(t, fakeAnalyzer{byText: map[string][]ports.Token{"病院に行った。": tokens}})
 
@@ -726,4 +732,160 @@ func TestClearAll_EmptiesStore_AndNoOpWhenEmpty(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("second clear entries=%d", len(list))
 	}
+}
+
+func TestIngestPage_OCRTextToCandidates(t *testing.T) {
+	m := newAppWithOCR(t, ocr.Stub{Text: "病院に行った。今日は雨だ。"})
+	img := []byte("fake-png-bytes")
+	got, err := m.IngestPage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "病院に行った。今日は雨だ。" {
+		t.Fatalf("Text=%q", got.Text)
+	}
+	if len(got.Candidates) != 2 {
+		t.Fatalf("Candidates=%#v", got.Candidates)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("ingest must not write queue; got %d", len(list))
+	}
+}
+
+func TestIngestPage_OversizeRejected(t *testing.T) {
+	m := newAppWithOCR(t, ocr.Stub{Text: "should-not-run"})
+	img := make([]byte, app.MaxUploadBytes+1)
+	_, err := m.IngestPage(img)
+	if !errors.Is(err, app.ErrPayloadTooLarge) {
+		t.Fatalf("got %v want ErrPayloadTooLarge", err)
+	}
+}
+
+func TestIngestPage_EmptyImage(t *testing.T) {
+	m := newAppWithOCR(t, ocr.Stub{Text: "x"})
+	_, err := m.IngestPage(nil)
+	if !errors.Is(err, app.ErrEmptyPage) {
+		t.Fatalf("got %v want ErrEmptyPage", err)
+	}
+}
+
+func TestIngestPage_OCRFailure(t *testing.T) {
+	m := newAppWithOCR(t, ocr.Stub{FailWith: errors.New("engine down")})
+	_, err := m.IngestPage([]byte("img"))
+	if !errors.Is(err, app.ErrOcrFailed) {
+		t.Fatalf("got %v want ErrOcrFailed", err)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("queue should stay empty after OCR fail; got %d", len(list))
+	}
+}
+
+func TestIngestPage_EmptyOCRText(t *testing.T) {
+	m := newAppWithOCR(t, ocr.Stub{Text: "   "})
+	_, err := m.IngestPage([]byte("img"))
+	if !errors.Is(err, app.ErrEmptyPage) {
+		t.Fatalf("got %v want ErrEmptyPage", err)
+	}
+}
+
+func TestIngestPage_SingleFlight(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine := &slowOCR{
+		started: started,
+		release: release,
+		text:    "私は本を読む。",
+	}
+	m := newAppWithOCR(t, engine)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := m.IngestPage([]byte("img-a"))
+		errCh <- err
+	}()
+	<-started
+
+	_, err := m.IngestPage([]byte("img-b"))
+	if !errors.Is(err, app.ErrIngestBusy) {
+		t.Fatalf("second ingest: %v want ErrIngestBusy", err)
+	}
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+}
+
+func TestIngestPage_DoesNotClearQueue(t *testing.T) {
+	q := queuestore.NewMem()
+	if err := q.Create(ports.QueueEntry{
+		ID: "keep", Sentence: "s", Unknowns: []string{"A"}, FirstUnknownAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := app.NewMiningApp(pinauth.Static{Secret: "test-pin-ok"}, fakeAnalyzer{}, q, ocr.Stub{Text: "今日は雨だ。"})
+	if _, err := m.IngestPage([]byte("img")); err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "keep" {
+		t.Fatalf("queue corrupted: %+v", list)
+	}
+}
+
+// slowOCR blocks after signaling started until release is closed.
+type slowOCR struct {
+	started chan struct{}
+	release chan struct{}
+	text    string
+	once    sync.Once
+}
+
+func (s *slowOCR) Recognize(image []byte) (string, error) {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return s.text, nil
+}
+
+func TestIngestPage_ExactMaxUploadBytesAllowed(t *testing.T) {
+	m := newAppWithOCR(t, ocr.Stub{Text: "私は本を読む。"})
+	img := make([]byte, app.MaxUploadBytes)
+	got, err := m.IngestPage(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Candidates) != 1 {
+		t.Fatalf("candidates=%#v", got.Candidates)
+	}
+}
+
+func TestNewMiningApp_RequiresPorts(t *testing.T) {
+	q := queuestore.NewMem()
+	a := fakeAnalyzer{}
+	o := ocr.Stub{Text: "x"}
+	p := pinauth.Static{Secret: "p"}
+
+	mustPanic := func(name string, fn func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Fatalf("%s: expected panic", name)
+			}
+		}()
+		fn()
+	}
+	mustPanic("nil pin", func() { app.NewMiningApp(nil, a, q, o) })
+	mustPanic("nil analyzer", func() { app.NewMiningApp(p, nil, q, o) })
+	mustPanic("nil queue", func() { app.NewMiningApp(p, a, nil, o) })
+	mustPanic("nil ocr", func() { app.NewMiningApp(p, a, q, nil) })
 }

@@ -1,6 +1,7 @@
 package queuestore_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,7 +10,7 @@ import (
 	"github.com/rikiisworking/miner/internal/ports"
 )
 
-func TestFile_CreateGetListUpdate(t *testing.T) {
+func TestFile_CreateList(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.json")
 	store := queuestore.NewFile(path)
 
@@ -24,17 +25,6 @@ func TestFile_CreateGetListUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := store.Get("e1")
-	if err != nil || !ok {
-		t.Fatalf("Get: ok=%v err=%v", ok, err)
-	}
-	if got.Sentence != e.Sentence || len(got.Unknowns) != 1 || got.Unknowns[0] != "本" {
-		t.Fatalf("Get mismatch: %+v", got)
-	}
-	if !got.FirstUnknownAt.Equal(now) {
-		t.Fatalf("FirstUnknownAt=%v want %v", got.FirstUnknownAt, now)
-	}
-
 	list, err := store.List()
 	if err != nil {
 		t.Fatal(err)
@@ -42,17 +32,12 @@ func TestFile_CreateGetListUpdate(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("List len=%d want 1", len(list))
 	}
-
-	e.Unknowns = append(e.Unknowns, "読む")
-	if err := store.Update(e); err != nil {
-		t.Fatal(err)
+	got := list[0]
+	if got.Sentence != e.Sentence || len(got.Unknowns) != 1 || got.Unknowns[0] != "本" {
+		t.Fatalf("List mismatch: %+v", got)
 	}
-	got, ok, err = store.Get("e1")
-	if err != nil || !ok {
-		t.Fatal(err)
-	}
-	if len(got.Unknowns) != 2 || got.Unknowns[1] != "読む" {
-		t.Fatalf("after update: %+v", got)
+	if !got.FirstUnknownAt.Equal(now) {
+		t.Fatalf("FirstUnknownAt=%v want %v", got.FirstUnknownAt, now)
 	}
 }
 
@@ -142,5 +127,46 @@ func TestFile_ClearAll(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("reopen after clear len=%d", len(list))
+	}
+}
+
+func TestFile_CreateRejectsEmptyAndDuplicateID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.json")
+	store := queuestore.NewFile(path)
+	if err := store.Create(ports.QueueEntry{ID: ""}); err == nil {
+		t.Fatal("expected empty id error")
+	}
+	e := ports.QueueEntry{
+		ID: "e1", Sentence: "s", Unknowns: []string{"A"}, FirstUnknownAt: time.Now().UTC(),
+	}
+	if err := store.Create(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(e); err == nil {
+		t.Fatal("expected duplicate id error")
+	}
+}
+
+func TestFile_AppendUnknown_EmptyID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.json")
+	store := queuestore.NewFile(path)
+	_, _, _, err := store.AppendUnknown("", "x")
+	if err == nil {
+		t.Fatal("expected empty id error")
+	}
+}
+
+func TestFile_LoadEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.json")
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := queuestore.NewFile(path)
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("empty file list=%+v", list)
 	}
 }

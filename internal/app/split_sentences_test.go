@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -82,7 +83,10 @@ func TestProposeSentences_DoesNotWriteQueue(t *testing.T) {
 	q := queuestore.NewMem()
 	m := newAppWithQueue(t, nil, q)
 
-	cands := m.ProposeSentences("病院に行った。今日は雨だ。")
+	cands, err := m.ProposeSentences("病院に行った。今日は雨だ。")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cands) != 2 {
 		t.Fatalf("candidates=%#v", cands)
 	}
@@ -109,7 +113,10 @@ func TestSelectCandidate_Analyze_DoesNotCreateQueueUntilUnknown(t *testing.T) {
 	m := newAppWithQueue(t, fakeAnalyzer{byText: map[string][]ports.Token{sentence: tokens}}, q)
 
 	page := "病院に行った。" + sentence
-	cands := m.ProposeSentences(page)
+	cands, err := m.ProposeSentences(page)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cands) < 2 {
 		t.Fatalf("cands=%#v", cands)
 	}
@@ -171,5 +178,13 @@ func TestEditWorkingSentence_ReAnalyze_NewTokens(t *testing.T) {
 	}
 	if first.PassID == second.PassID {
 		t.Fatal("re-analyze must issue new PassID")
+	}
+}
+
+func TestProposeSentences_EmptyReturnsErrEmptyPage(t *testing.T) {
+	m := newApp(t, nil)
+	_, err := m.ProposeSentences("   ")
+	if !errors.Is(err, app.ErrEmptyPage) {
+		t.Fatalf("got %v want ErrEmptyPage", err)
 	}
 }

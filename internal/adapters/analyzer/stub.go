@@ -46,12 +46,12 @@ func (Stub) Analyze(text string) ([]ports.Token, error) {
 // Real adapters will map engine POS tags into Token.Content using the package baseline.
 var fixtures = map[string][]ports.Token{
 	"私は本を読む。": {
-		{Surface: "私", Reading: "わたし", Content: true},  // noun
-		{Surface: "は", Reading: "", Content: false},    // particle
-		{Surface: "本", Reading: "ほん", Content: true},   // noun
-		{Surface: "を", Reading: "", Content: false},    // particle
+		{Surface: "私", Reading: "わたし", Content: true}, // noun
+		{Surface: "は", Reading: "", Content: false},   // particle
+		{Surface: "本", Reading: "ほん", Content: true},  // noun
+		{Surface: "を", Reading: "", Content: false},   // particle
 		{Surface: "読む", Reading: "よむ", Content: true}, // verb
-		{Surface: "。", Reading: "", Content: false},    // punctuation
+		{Surface: "。", Reading: "", Content: false},   // punctuation
 	},
 	"病院に行った。": {
 		{Surface: "病院", Reading: "びょういん", Content: true},

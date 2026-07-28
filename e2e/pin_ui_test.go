@@ -13,6 +13,7 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 
 	"github.com/rikiisworking/miner/internal/adapters/analyzer"
+	"github.com/rikiisworking/miner/internal/adapters/ocr"
 	"github.com/rikiisworking/miner/internal/adapters/pinauth"
 	"github.com/rikiisworking/miner/internal/adapters/queuestore"
 	"github.com/rikiisworking/miner/internal/app"
@@ -31,6 +32,7 @@ func startServer(t *testing.T) (baseURL string, shutdown func()) {
 		pinauth.Static{Secret: "test-pin-ok"},
 		analyzer.Stub{},
 		queuestore.NewFile(queuePath),
+		ocr.Stub{},
 	)
 	s, err := httpapi.New(httpapi.Config{
 		MiningApp: m,
@@ -530,8 +532,6 @@ func TestUI_ExportAndClearAll_FullTextPath(t *testing.T) {
 		t.Fatalf("empty export body=%q", result2.Value.Get("text").Str())
 	}
 }
-
-
 
 func TestUI_PageText_ProposePickAnalyze_EditReanalyze(t *testing.T) {
 	base, shutdown := startServer(t)

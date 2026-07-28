@@ -62,6 +62,19 @@
       font-size: 1.1rem; min-height: 2.75rem;
     }
     .content-list .reading { opacity: 0.75; font-size: 0.95rem; }
+    .candidate-list {
+      list-style: none; padding: 0; margin: 0.5rem 0 0;
+    }
+    .candidate-list li {
+      border-bottom: 1px solid #8883;
+    }
+    .candidate-btn {
+      display: block; width: 100%; text-align: left;
+      background: transparent; color: inherit; border: 0; border-radius: 0;
+      padding: 0.85rem 0.75rem; font-size: 1.05rem; font-weight: 500;
+      cursor: pointer; word-break: break-word;
+    }
+    .candidate-btn:active { opacity: 0.85; background: #8882; }
   </style>
 </head>
 <body>
@@ -71,10 +84,28 @@
     <a href="/queue" data-testid="nav-queue">Queue</a>
   </nav>
   <h1>miner</h1>
-  <p class="muted" data-testid="shell-ready">Unlocked. Paste a sentence to analyze.</p>
+  <p class="muted" data-testid="shell-ready">Unlocked. Paste a page or a sentence to mine.</p>
+
+  <section data-testid="page-text-section" aria-labelledby="page-text-heading">
+    <h2 id="page-text-heading">Page text</h2>
+    <p class="muted">Paste multi-sentence page text, then pick one sentence.</p>
+    <form method="post" action="/page-text"
+          hx-post="/page-text"
+          hx-target="#sentence-candidates"
+          hx-swap="innerHTML"
+          data-testid="page-text-form">
+      <label for="page_text">Japanese page text</label>
+      <textarea id="page_text" name="page_text" lang="ja"
+                data-testid="page-text-input"
+                placeholder="Paste a full page or several sentences…"
+                rows="5"></textarea>
+      <button type="submit" data-testid="page-text-submit">Propose sentences</button>
+    </form>
+    <div id="sentence-candidates" data-testid="sentence-candidates-slot"></div>
+  </section>
 
   <section data-testid="analyze-section" aria-labelledby="analyze-heading">
-    <h2 id="analyze-heading">Analyze sentence</h2>
+    <h2 id="analyze-heading">Working sentence</h2>
     <form method="post" action="/analyze"
           hx-post="/analyze"
           hx-target="#analyze-result"
@@ -83,7 +114,7 @@
       <label for="sentence">Japanese sentence</label>
       <textarea id="sentence" name="sentence" lang="ja"
                 data-testid="sentence-input"
-                placeholder="Paste or type a sentence…"
+                placeholder="Paste, type, or pick a candidate…"
                 required></textarea>
       <button type="submit" data-testid="analyze-submit">Analyze</button>
     </form>

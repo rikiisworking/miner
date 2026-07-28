@@ -532,3 +532,112 @@ func TestUI_ExportAndClearAll_FullTextPath(t *testing.T) {
 }
 
 
+
+func TestUI_PageText_ProposePickAnalyze_EditReanalyze(t *testing.T) {
+	base, shutdown := startServer(t)
+	t.Cleanup(shutdown)
+
+	browser := newBrowser(t)
+	page := unlockToShell(t, browser, base)
+
+	// Paste multi-sentence page
+	_, err := page.Eval(`(t) => {
+		const el = document.querySelector('[data-testid="page-text-input"]');
+		if (!el) throw new Error('page-text-input missing');
+		el.focus();
+		el.value = t;
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+		el.dispatchEvent(new Event('change', { bubbles: true }));
+	}`, "病院に行った。今日は雨だ。私は本を読む。")
+	if err != nil {
+		t.Fatalf("set page text: %v", err)
+	}
+	submit, err := page.Timeout(5 * time.Second).Element(`[data-testid="page-text-submit"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := submit.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="sentence-candidates"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("candidates missing: %v\nhtml=%s", err, html)
+	}
+	cands, err := page.Elements(`[data-testid="sentence-candidate"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 3 {
+		html, _ := page.HTML()
+		t.Fatalf("candidate count=%d want 3\nhtml=%s", len(cands), html)
+	}
+
+	// Pick third candidate (私は本を読む。)
+	pick, err := page.Timeout(5 * time.Second).Element(`[data-testid="candidate-pick"][data-index="2"]`)
+	if err != nil {
+		// fallback: last pick button
+		picks, err2 := page.Elements(`[data-testid="candidate-pick"]`)
+		if err2 != nil || len(picks) < 3 {
+			html, _ := page.HTML()
+			t.Fatalf("candidate-pick missing: %v\nhtml=%s", err, html)
+		}
+		pick = picks[2]
+	}
+	if err := pick.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("analyze-success after pick: %v\nhtml=%s", err, html)
+	}
+	if _, err := page.Timeout(5 * time.Second).Element(`ruby[data-testid="ruby-token"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("furigana after pick: %v\nhtml=%s", err, html)
+	}
+	// Working sentence box should hold selected text (OOB)
+	deadline := time.Now().Add(3 * time.Second)
+	var sentenceVal string
+	for time.Now().Before(deadline) {
+		el, err := page.Element(`[data-testid="sentence-input"]`)
+		if err == nil {
+			v, err := el.Property("value")
+			if err == nil {
+				sentenceVal = v.Str()
+				if strings.Contains(sentenceVal, "私は本を読む") {
+					break
+				}
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	if !strings.Contains(sentenceVal, "私は本を読む") {
+		t.Fatalf("sentence-input after pick=%q", sentenceVal)
+	}
+
+	// Edit working sentence → re-analyze
+	setSentence(t, page, "病院に行った。")
+	submitAnalyze(t, page)
+	if _, err := page.Timeout(10 * time.Second).Element(`[data-testid="analyze-success"]`); err != nil {
+		html, _ := page.HTML()
+		t.Fatalf("re-analyze success: %v\nhtml=%s", err, html)
+	}
+	// Content list should include 病院 from edited sentence fixture
+	words, err := page.Elements(`[data-testid="content-word"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundByouin := false
+	for _, w := range words {
+		surface, err := w.Attribute("data-surface")
+		if err == nil && surface != nil && *surface == "病院" {
+			foundByouin = true
+			break
+		}
+	}
+	if !foundByouin {
+		html, _ := page.HTML()
+		t.Fatalf("edited analyze missing 病院 content-word\nhtml=%s", html)
+	}
+}
